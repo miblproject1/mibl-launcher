@@ -16,7 +16,7 @@
 ---
 
 ### 📥 Download / Скачать
-Download the latest Windows installer (**`Mibl.Launcher_2.5.0_x64-setup.exe`**) from the [Releases](releases/latest) page.
+Download the latest Windows installer (**`Mibl.Launcher_2.5.0_x64-setup.exe`**) from the [Releases](../../releases/latest) page.
 
 ---
 
