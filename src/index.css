@@ -1,0 +1,685 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Pixelify+Sans:wght@400;500;600;700&family=Press+Start+2P&family=Silkscreen:wght@400;700&family=Handjet:wght@400;700&family=Nunito:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ tokens */
+ @theme {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel2: var(--panel2);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --font-sans: var(--app-font, var(--font)), Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --radius-theme: var(--radius);
+}
+
+:root {
+  color-scheme: dark;
+  --font-pixel: "Press Start 2P", "Silkscreen", "Handjet", ui-monospace, monospace;
+  --font-pixel-ui: "Silkscreen", "Handjet", "Press Start 2P", ui-monospace, monospace;
+  --bg: #0c0d10;
+  --panel: #13151b;
+  --panel2: #1a1d24;
+  --fg: #edeef2;
+  --muted: #8b90a0;
+  --accent: #5e6ad2;
+  --glass: 0.72;
+  --radius: 12px;
+  --font: "Segoe UI";
+  /* Типографика 2.5: семейство шрифта и масштаб задаёт UiProvider. */
+  --app-font: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --app-font-scale: 1;
+  --accent-soft: rgba(94, 106, 210, 0.16);
+  --accent-line: rgba(94, 106, 210, 0.5);
+  --accent-glow: rgba(94, 106, 210, 0.26);
+  --accent-fg: #ffffff;
+  --fg-line: rgba(237, 238, 242, 0.1);
+  --fg-soft: rgba(237, 238, 242, 0.05);
+  --panel-glass: rgba(19, 21, 27, 0.82);
+  --panel2-glass: rgba(26, 29, 36, 0.9);
+  font-family: var(--app-font, var(--font)), Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--app-font, var(--font)), Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  transition: font-size 140ms ease;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#root {
+  isolation: isolate;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+/* Типографика 2.5: выбранный стиль (пресет или свой .ttf/.otf/.woff2) должен
+   применяться ко всему интерфейсу — кнопкам, полям, заголовкам, навигации,
+   карточкам и служебным подписям. Правило с `!important` перекрывает
+   устаревшие font-family темы «Пиксельный 2.4» и утилиты font-mono.
+   Единственное исключение — карточки-образцы шрифтов (.font-preview):
+   каждая показывает свой собственный шрифт.
+   Важно: корень (html/body) должен брать семейство из --app-font, а не
+   наследовать его — иначе смена пресета не видна вообще. */
+html,
+body {
+  font-family: var(--app-font) !important;
+}
+
+body *:not(.font-preview),
+body *:not(.font-preview)::before,
+body *:not(.font-preview)::after {
+  font-family: inherit !important;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* --------------------------------------------------------------- scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* ------------------------------------------------------------------- glass */
+.glass {
+  background: var(--panel-glass);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius);
+  box-shadow:
+    0 22px 48px -32px rgba(0, 0, 0, 0.95),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+}
+
+.glass-soft {
+  background: var(--panel2-glass);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px) saturate(1.06);
+  -webkit-backdrop-filter: blur(14px) saturate(1.06);
+}
+
+/* Полупрозрачные панели «Главной»: фон и 3D-персонаж просвечивают сильнее. */
+.glass-faint {
+  background: color-mix(in srgb, var(--panel) 34%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius);
+  box-shadow:
+    0 22px 48px -36px rgba(0, 0, 0, 0.9),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px) saturate(1.08);
+  -webkit-backdrop-filter: blur(12px) saturate(1.08);
+}
+
+.glass-strong {
+  background: var(--panel2-glass);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: var(--radius);
+  box-shadow:
+    0 30px 70px -34px rgba(0, 0, 0, 0.98),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(26px) saturate(1.15);
+  -webkit-backdrop-filter: blur(26px) saturate(1.15);
+}
+
+/* ---------------------------------------------------------------- HUD 2.5.0 */
+/* Элементы, которые двигаются и перекрашиваются в редакторе кнопок. */
+.hud-el {
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.hud-solid {
+  background: var(--panel2) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: 0 16px 40px -26px rgba(0, 0, 0, 0.95) !important;
+}
+
+.hud-outline {
+  background: transparent !important;
+  border: 1px solid var(--accent-line) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.hud-ghost {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.hud-editing [data-hud] {
+  outline: 1px dashed rgba(94, 106, 210, 0.9);
+  outline-offset: 3px;
+  cursor: move !important;
+  touch-action: none;
+}
+
+html.hud-editing [data-hud] * {
+  pointer-events: none !important;
+}
+
+html.hud-editing [data-hud]::after {
+  content: attr(data-hud-label);
+  position: absolute;
+  top: -16px;
+  left: 0;
+  padding: 1px 5px;
+  border-radius: 4px 4px 0 0;
+  background: var(--accent);
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.hud-panel {
+  background: #14161f;
+}
+
+/* Плотная панель модального окна «Новая сборка» — без просвечивающего фона. */
+.modal-create {
+  background: #14161f;
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.75);
+  border-radius: 14px;
+}
+
+/* Матовая карточка сборки в стиле Modrinth App */
+.surface-card {
+  background: #14161d;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius);
+  box-shadow:
+    0 16px 38px -30px rgba(0, 0, 0, 0.9),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.surface-card:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: #161922;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 1rem;
+}
+
+.cover-art {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.cover-art::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent 78%);
+  opacity: 0.55;
+}
+
+.cover-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(120% 80% at 15% 0%, rgba(255, 255, 255, 0.25), transparent 55%),
+    linear-gradient(180deg, transparent 25%, rgba(0, 0, 0, 0.58) 100%);
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- controls */
+.title-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.no-drag,
+.title-drag button,
+.title-drag input,
+.title-drag a {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.range-accent {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    var(--accent) var(--range-pct, 50%),
+    rgba(255, 255, 255, 0.1) var(--range-pct, 50%),
+    rgba(255, 255, 255, 0.1) 100%
+  );
+  outline: none;
+}
+
+.range-accent::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #f4f5f7;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 4px 14px rgba(0, 0, 0, 0.55);
+  transition: transform 0.15s ease;
+}
+
+.range-accent::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+.range-accent::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #f4f5f7;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+input[type="color"] {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 7px;
+}
+
+select {
+  color-scheme: dark;
+}
+
+/* --------------------------------------------------------------- animation */
+@keyframes shimmer-move {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  animation: shimmer-move 1.35s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  50% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2.2s ease-in-out infinite;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-up {
+  animation: fade-up 0.32s ease-out both;
+}
+
+@keyframes float-slow {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(2%, -3%, 0) scale(1.04);
+  }
+}
+
+.float-slow {
+  animation: float-slow 18s ease-in-out infinite;
+}
+
+/* ------------------------------------------------------------------ misc */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.text-shadow {
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
+}
+
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--accent-line);
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ============================================ pixel preset «Пиксельный 2.4» */
+/* Шрифт темы больше не задаётся жёстко: семейство берётся из --app-font
+   (выбор пользователя в «Кастомизации» → «Типографика и шрифты»). */
+html[data-ui="pixel"] h1,
+html[data-ui="pixel"] h2,
+html[data-ui="pixel"] h3,
+html[data-ui="pixel"] .pixel-font,
+html[data-ui="pixel"] .logo-pixel,
+html[data-ui="pixel"] .ui-nav-label,
+html[data-ui="pixel"] button[data-btn="true"] {
+  letter-spacing: 0.01em;
+  font-weight: 700;
+}
+
+html[data-ui="pixel"] h1 {
+  font-size: 19px !important;
+  line-height: 1.55 !important;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
+}
+
+html[data-ui="pixel"] h2 {
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+}
+
+html[data-ui="pixel"] h3 {
+  font-size: 11px !important;
+  line-height: 1.45 !important;
+}
+
+html[data-ui="pixel"] button[data-btn="true"] {
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* Объёмные 3D-кнопки в стиле Minecraft. */
+html[data-ui="pixel"] button[data-btn="true"][data-variant="primary"],
+html[data-ui="pixel"] button[data-btn="true"][data-variant="play"],
+html[data-ui="pixel"] button[data-btn="true"][data-variant="success"],
+html[data-ui="pixel"] button[data-btn="true"][data-variant="danger"],
+html[data-ui="pixel"] button[data-btn="true"][data-variant="secondary"],
+html[data-ui="pixel"] button[data-btn="true"][data-variant="soft"],
+html[data-ui="pixel"] button[data-btn="true"][data-variant="outline"],
+html[data-ui="pixel"] button[data-btn="true"][data-variant="icon"] {
+  border-width: 2px;
+  border-bottom-width: 4px;
+  border-radius: 4px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 2px 0 rgba(0, 0, 0, 0.45);
+  transition:
+    transform 90ms ease,
+    border-bottom-width 90ms ease,
+    filter 120ms ease;
+}
+
+html[data-ui="pixel"] button[data-btn="true"][data-variant]:hover {
+  filter: brightness(1.08);
+}
+
+html[data-ui="pixel"] button[data-btn="true"][data-variant]:active {
+  border-bottom-width: 0;
+  transform: translateY(4px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+html[data-ui="pixel"] .glass,
+html[data-ui="pixel"] .glass-soft,
+html[data-ui="pixel"] .glass-strong,
+html[data-ui="pixel"] .surface-card,
+html[data-ui="pixel"] .launch-dock {
+  border-radius: 4px;
+  border-width: 2px;
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 4px 0 rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+html[data-ui="pixel"] .launch-dock {
+  border-bottom-width: 6px;
+}
+
+html[data-ui="pixel"] .pixel-tag {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Атмосферный «шейдерный» фон Minecraft. */
+.pixel-world {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 70% at 50% 100%, rgba(46, 84, 52, 0.55), transparent 62%),
+    linear-gradient(180deg, #070b18 0%, #0d1630 38%, #172448 62%, #1d2f3f 100%);
+}
+
+.pixel-world::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(90% 60% at 50% 0%, rgba(120, 170, 255, 0.16), transparent 62%),
+    radial-gradient(70% 50% at 15% 80%, rgba(80, 200, 160, 0.1), transparent 70%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+.pixel-grid-floor {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(180deg, transparent 40%, rgba(0, 0, 0, 0.55) 100%);
+  transform: perspective(420px) rotateX(62deg) scale(1.8);
+  transform-origin: bottom center;
+  opacity: 0.6;
+}
+
+.pixel-star {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: #dbeafe;
+  box-shadow: 0 0 6px rgba(196, 224, 255, 0.8);
+  animation: pixel-twinkle 4.5s ease-in-out infinite;
+}
+
+.pixel-moon {
+  position: absolute;
+  right: 11%;
+  top: 9%;
+  width: 58px;
+  height: 58px;
+  background: linear-gradient(135deg, #f8fafc, #c7d2fe);
+  box-shadow:
+    0 0 42px rgba(191, 219, 254, 0.55),
+    0 0 120px rgba(147, 197, 253, 0.25);
+}
+
+.pixel-cloud {
+  position: absolute;
+  height: 26px;
+  background:
+    linear-gradient(180deg, rgba(226, 236, 255, 0.22), rgba(148, 163, 184, 0.12));
+  border: 2px solid rgba(226, 236, 255, 0.14);
+  box-shadow: 0 6px 0 rgba(15, 23, 42, 0.18);
+  animation: pixel-cloud-drift 46s linear infinite;
+}
+
+.pixel-hills {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 27%;
+  height: 26%;
+  background:
+    linear-gradient(180deg, #16283a 0%, #102032 100%);
+  clip-path: polygon(
+    0% 72%, 6% 50%, 12% 62%, 19% 36%, 26% 58%, 34% 28%, 42% 54%, 50% 34%,
+    58% 60%, 66% 32%, 74% 56%, 82% 40%, 90% 62%, 96% 48%, 100% 66%, 100% 100%, 0% 100%
+  );
+  opacity: 0.9;
+}
+
+.pixel-ground {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 28%;
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.18) 0 46px, transparent 46px 48px),
+    repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.2) 0 46px, transparent 46px 48px),
+    linear-gradient(180deg, #3d6b3f 0%, #2f5534 10%, #4a3427 11%, #3a2820 100%);
+  border-top: 6px solid #5f8f4f;
+  box-shadow: inset 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+@keyframes pixel-twinkle {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes pixel-cloud-drift {
+  0% {
+    transform: translateX(-12vw);
+  }
+  100% {
+    transform: translateX(112vw);
+  }
+}
+

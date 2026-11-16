@@ -1,0 +1,33 @@
+{
+  "name": "mibl-launcher",
+  "private": true,
+  "version": "2.5.0",
+  "type": "module",
+  "description": "Mibl Launcher 2.5 — Minecraft launcher (Tauri v2 + React)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-opener": "^2.7.3",
+    "framer-motion": "^14.13.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "skinview3d": "^3.4.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@tauri-apps/cli": "^2.12.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8"
+  }
+}
