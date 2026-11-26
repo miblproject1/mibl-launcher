@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AccountView } from "../lib/api";
 import { useUi } from "../context/UiContext";
-import { APP_LANGUAGES } from "../i18n/translations";
-import { cn } from "../lib/utils";
 import { Icon } from "./Icon";
 import { SkinHead } from "./ui";
 import appIcon from "../assets/app-icon.png";
@@ -16,7 +14,7 @@ export function TitleBar({
   onOpenSettings?: () => void;
 }) {
   const [maximized, setMaximized] = useState(false);
-  const { language, setLanguage, t } = useUi();
+  const { t } = useUi();
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -57,31 +55,6 @@ export function TitleBar({
       </div>
 
       <div className="no-drag flex shrink-0 items-center gap-1.5">
-        <div
-          className="flex shrink-0 items-center rounded-lg border border-white/10 bg-white/[0.04] p-0.5"
-          title={t("titlebar.language")}
-          role="group"
-          aria-label={t("titlebar.language")}
-        >
-          {APP_LANGUAGES.map((item) => (
-            <button
-              key={item.code}
-              type="button"
-              onClick={() => setLanguage(item.code)}
-              title={item.label}
-              aria-pressed={language === item.code}
-              className={cn(
-                "h-[20px] rounded-md px-1.5 text-[9px] font-bold tracking-wide transition-colors",
-                language === item.code
-                  ? "bg-[var(--accent)] text-white shadow-[0_2px_8px_-3px_var(--accent)]"
-                  : "text-white/55 hover:text-white",
-              )}
-            >
-              {item.short}
-            </button>
-          ))}
-        </div>
-
         <button
           type="button"
           onClick={onOpenSettings}

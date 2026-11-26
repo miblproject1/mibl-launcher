@@ -28,7 +28,27 @@ const RULES: &[Rule] = &[
             "has been compiled by a more recent version",
         ],
         title: "Неподходящая версия Java",
-        detail: "Мод или игра собраны под другую версию Java. Для 1.17+ нужна Java 17, для 1.20.5+ — Java 21. Удалите свой путь к Java в настройках, чтобы лаунчер скачал правильную версию.",
+        detail: "Мод или игра собраны под другую версию Java. Для 1.17+ нужна Java 17, для 1.20.5+ — Java 21, для 26.x — Java 25. Удалите свой путь к Java в настройках, чтобы лаунчер скачал правильную версию.",
+    },
+    Rule {
+        keys: &[
+            "Could not find or load main class",
+            "Error: Could not find or load main class",
+            "ClassNotFoundException: net.minecraft",
+        ],
+        title: "Не найден главный класс игры",
+        detail: "JVM не нашла главный класс Minecraft. Обычно это битый classpath, повреждённый клиентский .jar или неверный mainClass у загрузчика. Переустановите сборку и проверьте, что папка libraries не повреждена.",
+    },
+    Rule {
+        keys: &[
+            "Unrecognized VM option",
+            "Unrecognized option",
+            "Error: Could not create the Java Virtual Machine",
+            "Invalid maximum heap size",
+            "Too small maximum heap",
+        ],
+        title: "Несовместимые параметры Java",
+        detail: "Java не понимает один из JVM-аргументов или размер памяти. Уберите лишние флаги из настроек сборки/лаунчера, уменьшите объём ОЗУ и проверьте, что выбрана подходящая версия Java.",
     },
     Rule {
         keys: &[
@@ -139,6 +159,20 @@ pub fn find_logs(game_dir: &Path) -> (Option<PathBuf>, Option<PathBuf>) {
 }
 
 pub fn analyze(instance_name: &str, exit_code: Option<i32>) -> CrashReport {
+    analyze_with_output(instance_name, exit_code, &[], false)
+}
+
+/// Анализ с учётом реального stdout/stderr процесса Java.
+///
+/// `prefer_process` включается для падений в первые секунды: игра могла не
+/// успеть создать `latest.log`, а актуальная причина (main class, Java,
+/// аргумент) осталась только в выводе процесса.
+pub fn analyze_with_output(
+    instance_name: &str,
+    exit_code: Option<i32>,
+    process_output: &[String],
+    prefer_process: bool,
+) -> CrashReport {
     let game_dir = paths::game_dir(instance_name);
     let (latest, crash) = find_logs(&game_dir);
     let source = crash.clone().or_else(|| latest.clone());
@@ -146,7 +180,16 @@ pub fn analyze(instance_name: &str, exit_code: Option<i32>) -> CrashReport {
         .as_deref()
         .map(|p| read_tail(p, 500))
         .unwrap_or_default();
-    let text = lines.join("\n");
+
+    let process_text = process_output.join("\n");
+    let log_text = lines.join("\n");
+    let text = if prefer_process && !process_text.trim().is_empty() {
+        process_text.clone()
+    } else if log_text.trim().is_empty() {
+        process_text.clone()
+    } else {
+        format!("{log_text}\n{process_text}")
+    };
     let low = text.to_lowercase();
 
     let mut causes: Vec<CrashCause> = Vec::new();
@@ -178,6 +221,9 @@ pub fn analyze(instance_name: &str, exit_code: Option<i32>) -> CrashReport {
     }
 
     let intro = match exit_code {
+        Some(code) if code != 0 && prefer_process && !process_text.trim().is_empty() => format!(
+            "Сборка «{instance_name}» завершилась с ошибкой (код {code}) в первые секунды запуска.\nИгра не успела создать свой лог, поэтому ниже — вывод процесса Java:"
+        ),
         Some(code) if code != 0 => format!(
             "Сборка «{instance_name}» завершилась с ошибкой (код {code}).\nНиже — вероятные причины и что делать:"
         ),
@@ -186,10 +232,29 @@ pub fn analyze(instance_name: &str, exit_code: Option<i32>) -> CrashReport {
         ),
     };
 
-    let tail = if lines.is_empty() {
-        "Лог не найден. Запустите сборку ещё раз, чтобы лаунчер смог собрать диагностику.".to_string()
+    let log_tail = if lines.is_empty() {
+        String::new()
     } else {
         lines[lines.len().saturating_sub(25)..].join("\n")
+    };
+    let process_tail = if process_output.is_empty() {
+        String::new()
+    } else {
+        process_output[process_output.len().saturating_sub(30)..].join("\n")
+    };
+
+    let tail = if prefer_process && !process_tail.is_empty() {
+        process_tail
+    } else if log_tail.is_empty() && process_tail.is_empty() {
+        "Лог не найден. Запустите сборку ещё раз, чтобы лаунчер смог собрать диагностику.".to_string()
+    } else if log_tail.is_empty() {
+        format!("Вывод процесса Java (stderr/stdout):\n{process_tail}")
+    } else if process_tail.is_empty() {
+        log_tail
+    } else {
+        format!(
+            "{log_tail}\n\n--- Вывод процесса Java (stderr/stdout) ---\n{process_tail}"
+        )
     };
 
     CrashReport {

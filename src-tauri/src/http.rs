@@ -25,6 +25,17 @@ pub static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .expect("http client")
 });
 
+/// Клиент для больших загрузок (JRE ~40 МБ): без общего 15-секундного лимита.
+static LONG_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(1800))
+        .pool_max_idle_per_host(16)
+        .build()
+        .expect("http client")
+});
+
 pub fn client() -> &'static reqwest::Client {
     &CLIENT
 }
@@ -92,6 +103,26 @@ pub async fn download_file(
     sha1: Option<&str>,
     task: Option<&TaskHandle>,
 ) -> Result<(), String> {
+    download_with(client(), url, dest, sha1, task).await
+}
+
+/// Скачать большой файл (например, JRE) без короткого общего таймаута.
+pub async fn download_file_long(
+    url: &str,
+    dest: &Path,
+    sha1: Option<&str>,
+    task: Option<&TaskHandle>,
+) -> Result<(), String> {
+    download_with(&LONG_CLIENT, url, dest, sha1, task).await
+}
+
+async fn download_with(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    sha1: Option<&str>,
+    task: Option<&TaskHandle>,
+) -> Result<(), String> {
     if let Some(expected) = sha1 {
         if dest.is_file() {
             if let Some(actual) = file_sha1(dest) {
@@ -112,7 +143,7 @@ pub async fn download_file(
     }
 
     let tmp = dest.with_extension("part");
-    let resp = client()
+    let resp = client
         .get(url)
         .send()
         .await

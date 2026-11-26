@@ -411,7 +411,7 @@ export default function CustomTab() {
               <div className="mt-3 rounded-lg border border-white/10 bg-black/25 p-2.5">
                 <div className="text-[9px] uppercase tracking-wider muted">{t("custom.preview")}</div>
                 <div className="mt-1 text-[15px] font-semibold leading-tight text-[var(--fg)]">
-                  Mibl Launcher 2.5.0
+                  Mibl Launcher 2.7.0
                 </div>
                 <div className="mt-1 text-[11px] leading-snug text-[var(--fg)]/75">
                   {t("custom.previewText")}

@@ -236,21 +236,6 @@ fn pack_file_name(name: &str) -> String {
         .unwrap_or_else(|| "file.jar".into())
 }
 
-/// Уникальное имя сборки: «Pack», «Pack (2)», «Pack (3)»…
-fn unique_name(base: &str) -> String {
-    let base = paths::safe_name(base);
-    if !paths::instance_dir(&base).exists() {
-        return base;
-    }
-    for n in 2..1000 {
-        let candidate = paths::safe_name(&format!("{base} ({n})"));
-        if !paths::instance_dir(&candidate).exists() {
-            return candidate;
-        }
-    }
-    format!("{base} ({})", instances::timestamp())
-}
-
 pub async fn import(
     app: &AppHandle,
     archive_path: &Path,
@@ -338,7 +323,7 @@ pub async fn import(
     let display_name = name_override
         .filter(|n| !n.trim().is_empty())
         .unwrap_or(raw_name);
-    let pack_name = unique_name(&display_name);
+    let pack_name = instances::unique_name(&display_name);
 
     let mut meta = instances::create(
         &pack_name,

@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, type AccountView, type Config, type SystemInfo } from "../lib/api";
 import { useNotifications } from "../context/NotificationContext";
-import { UI_LANGUAGES, useUi } from "../context/UiContext";
-import { APP_LANGUAGES } from "../i18n/translations";
+import { GARLAND_STYLES, UI_LANGUAGES, useUi, type GarlandStyle } from "../context/UiContext";
+import { APP_LANGUAGES, type Language } from "../i18n/translations";
 import { cn, copyText, errorText, isValidNick } from "../lib/utils";
 import { Icon } from "./Icon";
 import {
@@ -24,6 +25,7 @@ import {
 } from "./ui";
 import { CustomSelect } from "./CustomSelect";
 import { MicrosoftLoginModal } from "./MicrosoftLogin";
+import { GarlandSvg } from "./ChristmasDecorLayer";
 
 const SkinPreview = lazy(() =>
   import("./SkinPreview").then((module) => ({ default: module.SkinPreview })),
@@ -307,6 +309,9 @@ export default function SettingsTab({
         }
       />
 
+      {/* Рождественская тема 2.7.0 */}
+      <ChristmasSettings />
+
       {/* Язык интерфейса лаунчера — отдельно от языка игры Minecraft */}
       <GlassCard className="mb-4 p-4">
         <SectionTitle
@@ -315,33 +320,81 @@ export default function SettingsTab({
         >
           {t("settings.interfaceLanguage")}
         </SectionTitle>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="max-w-[560px] text-[11px] leading-snug muted">
+        <div className="flex flex-col gap-3">
+          <p className="text-[11px] leading-snug muted">
             {t("settings.interfaceLanguageHint")}
           </p>
-          <div
-            className="flex shrink-0 items-center gap-1 rounded-xl border border-white/10 bg-black/20 p-1"
-            role="group"
-            aria-label={t("settings.interfaceLanguage")}
-          >
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
             {APP_LANGUAGES.map((item) => (
-              <button
+              <Button
                 key={item.code}
-                type="button"
+                variant={language === item.code ? "primary" : "outline"}
+                size="xs"
+                className="flex w-full items-center justify-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
                 onClick={() => setLanguage(item.code)}
-                aria-pressed={language === item.code}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-colors",
-                  language === item.code
-                    ? "bg-[var(--accent)] text-white shadow-[0_2px_10px_-4px_var(--accent)]"
-                    : "text-white/60 hover:bg-white/[0.06] hover:text-white",
-                )}
               >
-                <span className="text-[9px] font-black tracking-wider opacity-70">{item.short}</span>
                 {item.label}
-              </button>
+              </Button>
             ))}
           </div>
+        </div>
+      </GlassCard>
+
+      {/* Резервные копии миров */}
+      <GlassCard className="mb-4 p-4">
+        <SectionTitle icon="archive">{t("settings.backupsTitle")}</SectionTitle>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_240px] sm:items-start">
+          <div className="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-black/15 px-3 py-2.5">
+            <div className="min-w-0">
+              <div className="text-[12px] font-semibold text-[var(--fg)]">
+                {t("settings.autoBackup")}
+              </div>
+              <div className="mt-0.5 text-[10.5px] leading-snug muted">
+                {t("settings.autoBackupHint")}
+              </div>
+            </div>
+            <Toggle
+              checked={Boolean(form.auto_backup_worlds)}
+              onChange={(auto_backup_worlds) =>
+                setForm((prev) => ({ ...prev, auto_backup_worlds }))
+              }
+            />
+          </div>
+          <Field label={t("settings.backupKeep")} hint={t("settings.backupKeepHint")}>
+            <CustomSelect
+              value={form.world_backup_keep ?? 5}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, world_backup_keep: Number(event.target.value) }))
+              }
+            >
+              {[5, 7, 10].map((count) => (
+                <option key={count} value={count}>
+                  {count}
+                </option>
+              ))}
+            </CustomSelect>
+          </Field>
+        </div>
+      </GlassCard>
+
+      {/* Оптимизация FPS */}
+      <GlassCard className="mb-4 p-4">
+        <SectionTitle icon="sparkles">{t("settings.fpsOptimization")}</SectionTitle>
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-black/15 px-3 py-2.5">
+          <div className="min-w-0">
+            <div className="text-[12px] font-semibold text-[var(--fg)]">
+              {t("settings.fpsOptimizationHint")}
+            </div>
+            <div className="mt-0.5 text-[10.5px] leading-snug muted">
+              {t("settings.fpsOptimizationSub")}
+            </div>
+          </div>
+          <Toggle
+            checked={Boolean(form.optimize_fps)}
+            onChange={(optimize_fps) =>
+              setForm((prev) => ({ ...prev, optimize_fps }))
+            }
+          />
         </div>
       </GlassCard>
 
@@ -746,6 +799,47 @@ export default function SettingsTab({
         </GlassCard>
       </div>
 
+      {/* CurseForge: личный ключ нужен только для этого каталога. */}
+      <GlassCard className="mb-4 p-4">
+        <SectionTitle
+          icon="package"
+          right={
+            <Badge tone={form.curseforge_api_key.trim() ? "success" : "warn"}>
+              {form.curseforge_api_key.trim() ? "OK" : "API key"}
+            </Badge>
+          }
+        >
+          CurseForge
+        </SectionTitle>
+        <Field label={t("modpacks.curseKeyTitle")} hint={t("modpacks.curseKeyText")}>
+          <div className="flex items-center gap-2">
+            <TextInput
+              type="password"
+              value={form.curseforge_api_key}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, curseforge_api_key: event.target.value }))
+              }
+              placeholder="CurseForge API key"
+            />
+            <Button
+              variant="outline"
+              icon="external"
+              onClick={() => void openUrl("https://console.curseforge.com/")}
+            >
+              {t("settings.open")}
+            </Button>
+            <Button
+              variant="primary"
+              icon="save"
+              loading={saving}
+              onClick={() => void saveConfig()}
+            >
+              {t("settings.save")}
+            </Button>
+          </div>
+        </Field>
+      </GlassCard>
+
       <ConfirmDialog
         open={removeIndex !== null}
         title={t("settings.removeConfirm")}
@@ -790,6 +884,148 @@ export default function SettingsTab({
 
       <MicrosoftLoginModal open={msOpen} onClose={() => setMsOpen(false)} onAccounts={onAccounts} />
     </div>
+  );
+}
+
+function ChristmasSettings() {
+  const {
+    t,
+    christmas,
+    setChristmas,
+    treeLights,
+    setTreeLights,
+    garlands,
+    addGarland,
+    clearGarlands,
+    setGarlandDraft,
+  } = useUi();
+  const { addNotification } = useNotifications();
+
+  const toggleChristmas = (value: boolean) => {
+    setChristmas(value);
+    addNotification({
+      type: value ? "success" : "info",
+      message: t(value ? "christmas.enabled" : "christmas.disabled"),
+    });
+  };
+
+  const beginDrag = (style: GarlandStyle, event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!christmas) {
+      setChristmas(true);
+      addNotification({ type: "success", message: t("christmas.enabled") });
+    }
+    const width = Math.max(1, window.innerWidth);
+    const height = Math.max(1, window.innerHeight);
+    setGarlandDraft({
+      style,
+      x: Math.min(99, Math.max(1, (event.clientX / width) * 100)),
+      y: Math.min(99, Math.max(1, (event.clientY / height) * 100)),
+    });
+  };
+
+  const garlandLabel = (style: GarlandStyle) =>
+    style === "classic"
+      ? t("settings.garlandClassic")
+      : style === "gold"
+        ? t("settings.garlandGold")
+        : t("settings.garlandIce");
+
+  const clearAll = () => {
+    clearGarlands();
+    addNotification({ type: "info", message: t("settings.garlandsCleared") });
+  };
+
+  return (
+    <GlassCard className="mb-4 p-4">
+      <SectionTitle
+        icon="sparkles"
+        right={<Badge tone="accent">{t("settings.christmasBadge")}</Badge>}
+      >
+        {t("settings.christmasTitle")}
+      </SectionTitle>
+
+      <div className="flex items-start justify-between gap-3 rounded-xl border border-[var(--accent-line)] bg-[var(--accent-soft)] px-3 py-2.5">
+        <div className="min-w-0">
+          <div className="text-[12px] font-semibold text-[var(--fg)]">
+            {t("settings.christmasMode")}
+          </div>
+          <div className="mt-0.5 text-[10.5px] leading-snug muted">
+            {t("settings.christmasHint")}
+          </div>
+        </div>
+        <Toggle checked={christmas} onChange={toggleChristmas} />
+      </div>
+
+      <div className="mt-3 rounded-xl border border-white/10 bg-black/15 p-3">
+        <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold">
+          <Icon name="gift" size={13} className="text-[var(--accent)]" />
+          {t("settings.christmasGarlands")}
+        </div>
+        <p className="mb-2.5 text-[10.5px] leading-snug muted">
+          {t("settings.christmasGarlandsHint")}
+        </p>
+
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {GARLAND_STYLES.map((style) => (
+            <div
+              key={style}
+              role="button"
+              tabIndex={0}
+              aria-label={garlandLabel(style)}
+              onPointerDown={(event) => beginDrag(style, event)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  addGarland(style, 50, 35);
+                  if (!christmas) setChristmas(true);
+                }
+              }}
+              className={cn(
+                "group flex cursor-grab touch-none select-none flex-col items-center justify-center gap-1 rounded-xl border px-2 py-2 transition-colors active:cursor-grabbing",
+                christmas
+                  ? "border-white/10 bg-black/20 hover:border-amber-200/45 hover:bg-black/30"
+                  : "border-white/10 bg-black/20 opacity-75 hover:opacity-95",
+              )}
+            >
+              <div className="pointer-events-none flex h-[38px] w-full items-center justify-center overflow-hidden">
+                <GarlandSvg style={style} className="h-[38px] w-full" />
+              </div>
+              <span className="text-[10px] font-semibold leading-none">
+                {garlandLabel(style)}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/15 px-3 py-2">
+          <span className="text-[11px] muted">
+            {t("settings.garlandsPlaced", { n: garlands.length })}
+          </span>
+          <Button
+            variant="ghost"
+            size="xs"
+            icon="trash"
+            disabled={garlands.length === 0}
+            onClick={clearAll}
+          >
+            {t("settings.clearGarlands")}
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/15 px-3 py-2.5">
+        <div className="min-w-0">
+          <div className="text-[11.5px] font-semibold text-[var(--fg)]/85">
+            {t("settings.treeLights")}
+          </div>
+          <div className="text-[10px] leading-snug muted">
+            {t("settings.treeLightsHint")}
+          </div>
+        </div>
+        <Toggle checked={treeLights} onChange={setTreeLights} />
+      </div>
+    </GlassCard>
   );
 }
 

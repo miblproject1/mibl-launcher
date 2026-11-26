@@ -10,11 +10,13 @@ use std::sync::Mutex;
 use crate::accounts;
 use crate::archive;
 use crate::auth;
+use crate::backups;
 use crate::crash;
 use crate::curse;
 use crate::ely;
 use crate::http;
 use crate::instances;
+use crate::launcher_import;
 use crate::loaders;
 use crate::models::{
     Account, AccountView, Config, CrashReport, ImportResult, Instance, InstancePatch, InstanceView,
@@ -34,6 +36,9 @@ static INSTALL_LOCK: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::
 /// Сборки, которые сейчас устанавливаются — флаг сбрасывается в конце установки.
 static INSTANCE_INSTALLS: LazyLock<Mutex<HashSet<String>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Сборки, для которых уже идёт бэкап миров (2.6).
+static BACKUP_LOCK: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Кэш официальных релизов Minecraft из манифеста Mojang.
 static MC_VERSIONS_CACHE: LazyLock<Mutex<Option<Vec<String>>>> =
@@ -121,7 +126,7 @@ fn system_info() -> SystemInfo {
 }
 
 fn install_java_hint() -> Option<String> {
-    for major in [21u32, 17, 8] {
+    for major in [25u32, 21, 17, 8] {
         if let Some(java) = crate::java::find_installed(major) {
             return Some(java);
         }
@@ -157,6 +162,8 @@ pub fn tasks_clear(app: AppHandle) {
 // -------------------------------------------------------------------- settings
 #[tauri::command]
 pub fn save_config(config: Config) -> Result<Config, String> {
+    let mut config = config;
+    config.world_backup_keep = config.world_backup_keep.clamp(3, 20);
     store::save_config(&config)?;
     Ok(config)
 }
@@ -735,10 +742,12 @@ pub async fn content_search(
     let offset = offset.unwrap_or(0);
     let limit = limit.unwrap_or(20).clamp(1, 40);
     let source = source.to_lowercase();
-    let kind = kind.to_lowercase();
-    if !matches!(kind.as_str(), "mod" | "shader" | "resourcepack") {
-        return Err(format!("Неизвестный тип контента: {kind}"));
-    }
+    let kind = match kind.to_lowercase().as_str() {
+        "mod" | "mods" => "mod",
+        "shader" | "shaders" | "shaderpack" | "shaderpacks" => "shader",
+        "resourcepack" | "resourcepacks" | "texturepack" | "texturepacks" => "resourcepack",
+        other => return Err(format!("Неизвестный тип контента: {other}")),
+    };
     let loader = loader.filter(|l| !l.is_empty() && l != "vanilla");
     let mc_version = mc_version.filter(|v| !v.trim().is_empty());
     // Загрузчик применим только к модам.
@@ -868,10 +877,12 @@ pub async fn content_install(
     instance: String,
 ) -> Result<Vec<String>, String> {
     let source = source.to_lowercase();
-    let kind = kind.to_lowercase();
-    if !matches!(kind.as_str(), "mod" | "shader" | "resourcepack") {
-        return Err(format!("Неизвестный тип контента: {kind}"));
-    }
+    let kind = match kind.to_lowercase().as_str() {
+        "mod" | "mods" => "mod",
+        "shader" | "shaders" | "shaderpack" | "shaderpacks" => "shader",
+        "resourcepack" | "resourcepacks" | "texturepack" | "texturepacks" => "resourcepack",
+        other => return Err(format!("Неизвестный тип контента: {other}")),
+    };
 
     let key = format!("content:{source}:{project_id}:{kind}:{instance}");
     {
@@ -1162,23 +1173,154 @@ pub async fn modpack_install(
     result
 }
 
-// ---------------------------------------------------------------- backup/crash
+// ---------------------------------------------------------------- backup
 #[tauri::command]
-pub async fn backup_instance(app: AppHandle, name: String) -> Result<String, String> {
-    let task = TaskHandle::new(&app, format!("Бэкап «{name}»"), "backup");
-    let result = tauri::async_runtime::spawn_blocking(move || instances::backup_worlds(&name))
-        .await
-        .map_err(|e| e.to_string())?;
-    match result {
-        Ok(path) => {
-            task.finish();
-            Ok(path.to_string_lossy().to_string())
+pub fn list_world_backups(instance: String) -> Vec<backups::WorldBackup> {
+    backups::list(&instance)
+}
+
+#[tauri::command]
+pub async fn backup_worlds_now(
+    app: AppHandle,
+    instance: String,
+    auto: Option<bool>,
+) -> Result<Vec<backups::WorldBackup>, String> {
+    {
+        let mut running = BACKUP_LOCK
+            .lock()
+            .map_err(|_| "Внутренняя блокировка бэкапа недоступна".to_string())?;
+        if !running.insert(instance.clone()) {
+            return Err("Бэкап этой сборки уже идёт — дождитесь завершения".into());
         }
-        Err(e) => {
+    }
+
+    let task = TaskHandle::new(&app, format!("Бэкап миров «{instance}»"), "backup");
+    let automatic = auto.unwrap_or(false);
+    let keep = store::load_config().world_backup_keep;
+    let name = instance.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        backups::backup_worlds(&name, automatic, keep)
+    })
+    .await;
+
+    if let Ok(mut running) = BACKUP_LOCK.lock() {
+        running.remove(&instance);
+    }
+    let _ = app.emit(
+        "backups-changed",
+        serde_json::json!({ "instance": instance }),
+    );
+
+    match result {
+        Ok(Ok(list)) => {
+            task.finish();
+            Ok(list)
+        }
+        Ok(Err(e)) => {
             task.fail(e.clone());
             Err(e)
         }
+        Err(e) => {
+            let message = format!("Бэкап миров: {e}");
+            task.fail(message.clone());
+            Err(message)
+        }
     }
+}
+
+#[tauri::command]
+pub async fn restore_world_backup(
+    app: AppHandle,
+    instance: String,
+    path: String,
+) -> Result<backups::RestoreResult, String> {
+    let name = instance.clone();
+    let result =
+        tauri::async_runtime::spawn_blocking(move || backups::restore(&name, Path::new(&path)))
+            .await
+            .map_err(|e| format!("Восстановление мира: {e}"))?;
+    let _ = app.emit(
+        "backups-changed",
+        serde_json::json!({ "instance": instance }),
+    );
+    result
+}
+
+#[tauri::command]
+pub fn delete_world_backup(app: AppHandle, instance: String, path: String) -> Result<(), String> {
+    backups::delete(&instance, Path::new(&path))?;
+    let _ = app.emit(
+        "backups-changed",
+        serde_json::json!({ "instance": instance }),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_backups_folder(app: AppHandle, instance: String) -> Result<(), String> {
+    let dir = backups::root(&instance);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Папка бэкапов: {e}"))?;
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("Не удалось открыть папку: {e}"))
+}
+
+// ---------------------------------------------------------------- импорт
+#[tauri::command]
+pub async fn scan_other_launchers() -> Result<launcher_import::LauncherScan, String> {
+    tauri::async_runtime::spawn_blocking(launcher_import::scan)
+        .await
+        .map_err(|e| format!("Сканирование лаунчеров: {e}"))
+}
+
+#[tauri::command]
+pub async fn inspect_launcher_folder(
+    path: String,
+) -> Result<launcher_import::FoundInstance, String> {
+    tauri::async_runtime::spawn_blocking(move || launcher_import::inspect_folder(Path::new(&path)))
+        .await
+        .map_err(|e| format!("Проверка папки: {e}"))?
+}
+
+#[tauri::command]
+pub async fn import_other_instances(
+    app: AppHandle,
+    items: Vec<launcher_import::ImportItem>,
+) -> Result<launcher_import::ImportSummary, String> {
+    if items.is_empty() {
+        return Err("Не выбрано ни одной сборки".into());
+    }
+    let task = std::sync::Arc::new(TaskHandle::new(&app, "Импорт сборок", "import"));
+    let app2 = app.clone();
+    let task2 = task.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        launcher_import::import(&app2, &items, &task2)
+    })
+    .await;
+    let _ = app.emit("instances-changed", ());
+    match result {
+        Ok(summary) => {
+            task.finish();
+            Ok(summary)
+        }
+        Err(e) => {
+            let message = format!("Импорт сборок: {e}");
+            task.fail(message.clone());
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn pick_folder() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        rfd::FileDialog::new()
+            .pick_folder()
+            .map(|p| p.to_string_lossy().to_string())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 #[tauri::command]

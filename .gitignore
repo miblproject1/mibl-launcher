@@ -34,3 +34,6 @@ Thumbs.db
 *.tsbuildinfo
 *.local
 src-tauri/gen/schemas/
+
+# local opencode agent configuration
+.opencode/

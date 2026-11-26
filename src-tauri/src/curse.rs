@@ -1,20 +1,58 @@
-//! CurseForge через открытый прокси `https://api.curse.tools` (без API-ключа).
+//! CurseForge (https://curseforge.com) через официальный API и публичный прокси.
 //!
 //! Используется для поиска готовых сборок и загрузки файлов по `manifest.json`.
-//! API повторяет официальный `api.curseforge.com/v1`, поэтому структура ответа
-//! `{ "data": [...], "pagination": { ... } }` и поля проектов совпадают.
+//! Структура ответа официального API `{ "data": [...], "pagination": { ... } }`
+//! совпадает с ответом прокси `api.curse.tools`, поэтому остальной код
+//! работает с обоими источниками одинаково.
+//!
+//! Если пользователь указал личный ключ в настройках, запросы идут напрямую
+//! в `https://api.curseforge.com/v1` с заголовком `x-api-key`. Без ключа
+//! используется публичный прокси `https://api.curse.tools/v1/cf`, который не
+//! требует ключа и отдаёт те же `data[]`.
 
 use serde_json::Value;
 
 use crate::http;
 use crate::models::{ModpackHit, ModpackSearch};
 
-pub const BASE: &str = "https://curse.tools/v1/cf";
-/// Резервный хост на случай, если основной прокси недоступен.
+/// Официальный API CurseForge. Пути в коде начинаются с `/`, поэтому
+/// `/mods/search` превращается в `https://api.curseforge.com/v1/mods/search`.
+pub const BASE: &str = "https://api.curseforge.com/v1";
+/// Публичный прокси CurseForge, работающий без API-ключа.
 pub const FALLBACK_BASE: &str = "https://api.curse.tools/v1/cf";
+/// Ключ доступа к API CurseForge (`x-api-key`).
+///
+/// Реальный ключ подставляется на этапе сборки из переменной окружения
+/// `CURSEFORGE_API_KEY`. Без ключа лаунчер автоматически переключается на
+/// публичный прокси, поэтому каталог остаётся доступным.
+const CURSEFORGE_API_KEY: &str = match option_env!("CURSEFORGE_API_KEY") {
+    Some(key) => key,
+    None => "ВСТАВЬ_КЛЮЧ",
+};
+
+/// Ключ, готовый к отправке: сначала личный ключ из настроек лаунчера,
+/// затем ключ сборки из переменной окружения. Пустые значения и заглушки
+/// отбрасываются.
+fn is_placeholder(key: &str) -> bool {
+    key.is_empty() || key == "ВСТАВЬ_КЛЮЧ" || key == "ВСТАВЬ_СЮДА_КЛЮЧ"
+}
+
+fn configured_api_key() -> Option<String> {
+    let from_settings = crate::store::load_config().curseforge_api_key;
+    let from_settings = from_settings.trim();
+    if !is_placeholder(from_settings) {
+        return Some(from_settings.to_string());
+    }
+    let key = CURSEFORGE_API_KEY.trim();
+    if is_placeholder(key) {
+        None
+    } else {
+        Some(key.to_string())
+    }
+}
 pub const GAME_ID: &str = "432";
 pub const MODPACK_CLASS_ID: u64 = 4471;
-/// Публичный User-Agent лаунчера — обязателен для прокси и CDN CurseForge.
+/// Публичный User-Agent лаунчера — обязателен для шлюза и CDN CurseForge.
 pub const USER_AGENT: &str = concat!("MiblLauncher/", env!("CARGO_PKG_VERSION"));
 /// Таймаут запросов CurseForge: 15 секунд.
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
@@ -25,9 +63,20 @@ pub struct PackFileInfo {
     pub sha1: Option<String>,
 }
 
+/// Нормализованный тип контента (принимает и единственное, и множественное число).
+fn content_kind(kind: &str) -> Option<&'static str> {
+    match kind.to_lowercase().as_str() {
+        "mod" | "mods" => Some("mod"),
+        "shader" | "shaders" | "shaderpack" | "shaderpacks" => Some("shader"),
+        "resourcepack" | "resourcepacks" | "texturepack" | "texturepacks" => Some("resourcepack"),
+        "modpack" | "modpacks" => Some("modpack"),
+        _ => None,
+    }
+}
+
 /// CurseForge `classId` для типа контента.
 pub fn class_id(kind: &str) -> Option<u64> {
-    match kind {
+    match content_kind(kind)? {
         "mod" => Some(6),
         "shader" => Some(6552),
         "resourcepack" => Some(12),
@@ -84,12 +133,14 @@ fn encode_filename(name: &str) -> String {
 }
 
 /// Резервная прямая CDN-ссылка CurseForge:
-/// `https://mediafilez.forgecdn.net/files/<id/1000>/<id%1000>/<fileName>`.
+/// `https://edge.forgecdn.net/files/<id/1000>/<id%1000, 3 цифры>/<fileName>`.
+///
+/// Нужна, когда мод отдаёт `downloadUrl: null` (автор запретил раздачу через API).
 pub fn cdn_url(file_id: u64, filename: &str) -> String {
     let part1 = file_id / 1000;
     let part2 = file_id % 1000;
     format!(
-        "https://mediafilez.forgecdn.net/files/{part1}/{part2}/{}",
+        "https://edge.forgecdn.net/files/{part1}/{part2:03}/{}",
         encode_filename(filename)
     )
 }
@@ -109,38 +160,90 @@ fn loader_label(raw: &str) -> Option<&'static str> {
     }
 }
 
-async fn get_from(base: &str, path: &str, params: &[(String, String)]) -> Result<Value, String> {
+/// Короткий пересказ тела ответа без сырого HTML — чтобы ошибки оставались читаемыми.
+fn clean_body(text: &str) -> String {
+    let trimmed = text.trim_start();
+    // HTML-страницы ошибок (Cloudflare, заглушки шлюза) в сообщение не попадают.
+    if trimmed.starts_with('<') {
+        return String::new();
+    }
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(180).collect()
+}
+
+/// Признак того, что вместо JSON пришла HTML/XML-страница: JSON никогда не начинается с `<`.
+fn looks_like_html(text: &str) -> bool {
+    text.trim_start().starts_with('<')
+}
+
+async fn get_from(
+    base: &str,
+    api_key: Option<&str>,
+    path: &str,
+    params: &[(String, String)],
+) -> Result<Value, String> {
     let url = format!("{base}{path}");
-    let resp = http::client()
+    let mut request = http::client()
         .get(&url)
-        // Прокси CurseForge отдаёт 403 без явного Accept и внятного User-Agent.
         .header("Accept", "application/json")
         .header("User-Agent", USER_AGENT)
         .query(params)
-        .timeout(REQUEST_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT);
+    // Официальный API требует ключ, публичный прокси — нет. Заголовок
+    // добавляем только когда ключ действительно есть.
+    if let Some(key) = api_key {
+        request = request.header("x-api-key", key);
+    }
+    let resp = request
         .send()
         .await
         .map_err(|e| format!("CurseForge: {e}"))?;
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        let snippet: String = text.chars().take(180).collect();
-        return Err(format!("CurseForge HTTP {status} — {snippet}"));
+        // Тело ошибки может быть огромной HTML-страницей — оставляем только статус.
+        let detail = clean_body(&text);
+        return Err(if detail.is_empty() {
+            format!("CurseForge HTTP {status}")
+        } else {
+            format!("CurseForge HTTP {status} — {detail}")
+        });
     }
-    serde_json::from_str(&text).map_err(|e| format!("CurseForge JSON: {e}"))
+    if looks_like_html(&text) {
+        return Err(format!(
+            "CurseForge HTTP {status}: сервер вернул HTML вместо JSON — проверьте адрес API и ключ доступа"
+        ));
+    }
+    let value: Value =
+        serde_json::from_str(&text).map_err(|e| format!("CurseForge JSON: {e}"))?;
+    // Некоторые прокси отдают голый массив вместо `{ "data": [...] }`.
+    Ok(match value {
+        Value::Array(list) => serde_json::json!({ "data": list }),
+        other => other,
+    })
 }
 
 async fn get(path: &str, params: &[(String, String)]) -> Result<Value, String> {
-    let mut last_error = String::new();
-    for base in [BASE, FALLBACK_BASE] {
-        match get_from(base, path, params).await {
+    let api_key = configured_api_key();
+    let mut attempts: Vec<(&str, Option<&str>)> = Vec::new();
+    if let Some(key) = api_key.as_deref() {
+        attempts.push((BASE, Some(key)));
+    }
+    // Без ключа (или если официальный API отклонил ключ) используем
+    // публичный прокси, который отдаёт тот же формат `data[]`.
+    attempts.push((FALLBACK_BASE, None));
+
+    let mut errors: Vec<String> = Vec::new();
+    for (base, key) in attempts {
+        match get_from(base, key, path, params).await {
             Ok(value) => return Ok(value),
-            Err(error) => last_error = error,
+            Err(error) => errors.push(format!("{base}: {error}")),
         }
     }
-    // Понятная подсказка вместо технической ошибки прокси.
+    // Понятная подсказка вместо технической ошибки шлюза.
     Err(format!(
-        "Серверы CurseForge сейчас недоступны. Проверьте подключение к интернету и повторите поиск позже — каталог Modrinth продолжает работать. Техническая деталь: {last_error}"
+        "Серверы CurseForge сейчас недоступны. Проверьте подключение к интернету и повторите поиск позже — каталог Modrinth продолжает работать. Можно также указать личный ключ в настройках, чтобы запросы шли напрямую. Техническая деталь: {}",
+        errors.join(" | ")
     ))
 }
 
@@ -239,7 +342,7 @@ fn hit_from_value(item: &Value, expected_class: Option<u64>) -> Option<ModpackHi
         }
     }
 
-    // `latestFiles` (если прокси вернул полные объекты файлов) содержит
+    // `latestFiles` (если API вернул полные объекты файлов) содержит
     // gameVersions: ["1.20.1", "Fabric", ...].
     if let Some(list) = item.get("latestFiles").and_then(|c| c.as_array()) {
         for file in list {
@@ -291,6 +394,7 @@ pub async fn search_content(
     limit: u32,
     offset: u32,
 ) -> Result<ModpackSearch, String> {
+    let kind = content_kind(kind).ok_or_else(|| format!("Неизвестный тип контента: {kind}"))?;
     let class = class_id(kind).ok_or_else(|| format!("Неизвестный тип контента: {kind}"))?;
     let mut params: Vec<(String, String)> = vec![
         ("gameId".into(), GAME_ID.into()),
@@ -347,20 +451,39 @@ pub async fn search(
     search_content(query, "modpack", loader, mc_version, limit, offset).await
 }
 
-fn file_info(file: &Value) -> Option<PackFileInfo> {
-    let filename = safe_filename(
-        file.get("fileName")
-            .and_then(|v| v.as_str())
-            .unwrap_or("file.jar"),
-    );
+fn file_info(file: &Value) -> Result<PackFileInfo, String> {
+    let raw_name = file
+        .get("fileName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let filename = safe_filename(if raw_name.is_empty() {
+        "file.jar"
+    } else {
+        raw_name
+    });
     let id = file
         .get("id")
         .and_then(|v| v.as_u64())
         .or_else(|| file.get("fileId").and_then(|v| v.as_u64()));
-    let url = match file.get("downloadUrl").and_then(|v| v.as_str()) {
-        Some(u) if !u.trim().is_empty() => u.to_string(),
-        // Автор запретил прямую раздачу через API — собираем CDN-ссылку сами.
-        _ => cdn_url(id?, &filename),
+    let url = match file
+        .get("downloadUrl")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
+        Some(u) => u.to_string(),
+        // Автор запретил прямую раздачу через API (`downloadUrl: null`) — собираем
+        // CDN-ссылку из ID файла, а если и ID нет, отдаём понятную ошибку.
+        None => match id {
+            Some(id) => cdn_url(id, &filename),
+            None => {
+                return Err(
+                    "автор запретил прямое скачивание, а ID файла отсутствует в ответе API"
+                        .to_string(),
+                )
+            }
+        },
     };
     let sha1 = file
         .get("hashes")
@@ -372,7 +495,7 @@ fn file_info(file: &Value) -> Option<PackFileInfo> {
         .and_then(|h| h.get("value"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    Some(PackFileInfo {
+    Ok(PackFileInfo {
         url,
         filename,
         sha1,
@@ -385,7 +508,7 @@ pub async fn file(project_id: u64, file_id: u64) -> Result<PackFileInfo, String>
     let file = value
         .get("data")
         .ok_or_else(|| format!("CurseForge: файл {file_id} не найден"))?;
-    file_info(file).ok_or_else(|| format!("CurseForge: файл {file_id} недоступен"))
+    file_info(file).map_err(|reason| format!("CurseForge: файл {file_id} недоступен — {reason}"))
 }
 
 fn file_date(file: &Value) -> &str {
@@ -444,6 +567,7 @@ pub async fn pack_file(
             .then_with(|| file_date(b).cmp(file_date(a)))
     });
 
+    let mut last_reason = String::new();
     for file in &files {
         if file
             .get("isServerPack")
@@ -460,11 +584,16 @@ pub async fn pack_file(
         if !name.ends_with(".zip") && !name.ends_with(".mrpack") {
             continue;
         }
-        if let Some(info) = file_info(file) {
-            return Ok(info);
+        match file_info(file) {
+            Ok(info) => return Ok(info),
+            Err(reason) => last_reason = reason,
         }
     }
-    Err("У этой сборки нет подходящего файла для скачивания".into())
+    Err(if last_reason.is_empty() {
+        "У этой сборки нет подходящего файла для скачивания".to_string()
+    } else {
+        format!("У этой сборки нет подходящего файла для скачивания: {last_reason}")
+    })
 }
 
 /// Подобрать файл мода/шейдера/ресурспака для установки в сборку.
@@ -474,71 +603,180 @@ pub async fn content_file(
     loader: Option<&str>,
     mc_version: Option<&str>,
 ) -> Result<PackFileInfo, String> {
-    let want_zip = matches!(kind, "shader" | "resourcepack" | "modpack");
+    let kind = content_kind(kind).ok_or_else(|| format!("Неизвестный тип контента: {kind}"))?;
 
-    let mut files: Vec<Value> = Vec::new();
-    for filtered in [true, false] {
-        let mut params: Vec<(String, String)> = vec![
-            ("pageSize".into(), "50".into()),
-            ("index".into(), "0".into()),
-        ];
-        if filtered {
-            if let Some(version) = mc_version.filter(|v| !v.is_empty()) {
-                params.push(("gameVersion".into(), version.to_string()));
-            }
-            if matches!(kind, "mod" | "modpack") {
-                if let Some(loader) = loader.and_then(loader_type) {
-                    params.push(("modLoaderType".into(), loader.to_string()));
-                }
-            }
-        }
-        let value = get(&format!("/mods/{project_id}/files"), &params).await?;
-        files = value
-            .get("data")
-            .and_then(|d| d.as_array())
-            .cloned()
-            .unwrap_or_default();
-        if !files.is_empty() {
-            break;
-        }
+    // Шейдеры (classId 6552) и ресурспаки (classId 12) не привязаны к
+    // Forge/Fabric/NeoForge/Quilt — подбираем файл только по версии игры.
+    if matches!(kind, "shader" | "resourcepack") {
+        return game_content_file(project_id, kind, mc_version).await;
     }
 
+    let want_zip = kind == "modpack";
+    let mut files = fetch_content_files(project_id, mc_version, loader).await?;
+    if files.is_empty() {
+        // Фильтры могли быть слишком строгими — берём все файлы проекта.
+        files = fetch_content_files(project_id, None, None).await?;
+    }
+    sort_content_files(&mut files);
+
+    if let Ok(info) = pick_content_file(&files, want_zip, true) {
+        return Ok(info);
+    }
+    match pick_content_file(&files, want_zip, false) {
+        Ok(info) => Ok(info),
+        Err(reason) if !reason.is_empty() => Err(format!(
+            "У этого проекта нет подходящего файла для скачивания: {reason}"
+        )),
+        Err(_) => Err("У этого проекта нет подходящего файла для скачивания".into()),
+    }
+}
+
+fn file_game_versions(file: &Value) -> &[Value] {
+    file.get("gameVersions")
+        .and_then(|v| v.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[])
+}
+
+fn file_matches_game(file: &Value, wanted: &str) -> bool {
+    file_game_versions(file)
+        .iter()
+        .any(|version| version.as_str() == Some(wanted))
+}
+
+/// «1.21.4» → «1.21»: минорная ветка для мягкого фоллбэка шейдеров/ресурспаков.
+fn minor_branch(mc_version: &str) -> Option<String> {
+    let mut parts = mc_version.split('.');
+    let major = parts.next()?.trim();
+    let minor = parts.next()?.trim();
+    if major.is_empty() || minor.is_empty() {
+        return None;
+    }
+    Some(format!("{major}.{minor}"))
+}
+
+fn file_matches_minor(file: &Value, branch: &str) -> bool {
+    let prefix = format!("{branch}.");
+    file_game_versions(file).iter().any(|version| {
+        let Some(game_version) = version.as_str() else {
+            return false;
+        };
+        game_version == branch || game_version.starts_with(&prefix)
+    })
+}
+
+fn sort_content_files(files: &mut [Value]) {
     files.sort_by(|a, b| {
         release_rank(a)
             .cmp(&release_rank(b))
             .then_with(|| file_date(b).cmp(file_date(a)))
     });
+}
 
-    let pick = |files: &[Value], strict: bool| -> Option<PackFileInfo> {
-        for file in files {
-            if file
-                .get("isServerPack")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            let name = file
-                .get("fileName")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_lowercase();
-            let matches = if want_zip {
-                name.ends_with(".zip")
-            } else {
-                name.ends_with(".jar")
-            };
-            if strict && !matches {
-                continue;
-            }
-            if let Some(info) = file_info(file) {
-                return Some(info);
+fn pick_content_file(
+    files: &[Value],
+    want_zip: bool,
+    strict: bool,
+) -> Result<PackFileInfo, String> {
+    let mut last_reason = String::new();
+    for file in files {
+        if file
+            .get("isServerPack")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let name = file
+            .get("fileName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let matches = if want_zip {
+            name.ends_with(".zip")
+        } else {
+            name.ends_with(".jar")
+        };
+        if strict && !matches {
+            continue;
+        }
+        match file_info(file) {
+            Ok(info) => return Ok(info),
+            Err(reason) => last_reason = reason,
+        }
+    }
+    Err(last_reason)
+}
+
+async fn fetch_content_files(
+    project_id: u64,
+    game_version: Option<&str>,
+    loader: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let mut params: Vec<(String, String)> = vec![
+        ("pageSize".into(), "50".into()),
+        ("index".into(), "0".into()),
+    ];
+    if let Some(version) = game_version.filter(|v| !v.is_empty()) {
+        params.push(("gameVersion".into(), version.to_string()));
+    }
+    if let Some(loader) = loader.and_then(loader_type) {
+        params.push(("modLoaderType".into(), loader.to_string()));
+    }
+    let value = get(&format!("/mods/{project_id}/files"), &params).await?;
+    Ok(value
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default())
+}
+
+/// Мягкий подбор файла шейдера/ресурспака:
+/// точная версия игры → та же минорная ветка (1.21.x) → самый свежий релиз.
+async fn game_content_file(
+    project_id: u64,
+    kind: &str,
+    mc_version: Option<&str>,
+) -> Result<PackFileInfo, String> {
+    let wanted = mc_version.filter(|version| !version.is_empty());
+
+    if let Some(version) = wanted {
+        let mut exact = fetch_content_files(project_id, Some(version), None).await?;
+        // Прокси может проигнорировать фильтр — проверяем совпадение сами.
+        exact.retain(|file| file_matches_game(file, version));
+        sort_content_files(&mut exact);
+        if let Ok(info) = pick_content_file(&exact, true, true) {
+            return Ok(info);
+        }
+    }
+
+    let mut files = fetch_content_files(project_id, None, None).await?;
+    sort_content_files(&mut files);
+
+    if let Some(version) = wanted {
+        if let Some(branch) = minor_branch(version) {
+            let mut branch_files: Vec<Value> = files
+                .iter()
+                .filter(|file| file_matches_minor(file, &branch))
+                .cloned()
+                .collect();
+            sort_content_files(&mut branch_files);
+            if let Ok(info) = pick_content_file(&branch_files, true, true) {
+                return Ok(info);
             }
         }
-        None
-    };
+    }
 
-    pick(&files, true)
-        .or_else(|| pick(&files, false))
-        .ok_or_else(|| "У этого проекта нет подходящего файла для скачивания".into())
+    let label = if kind == "shader" {
+        "шейдера"
+    } else {
+        "ресурспака"
+    };
+    match pick_content_file(&files, true, true) {
+        Ok(info) => Ok(info),
+        Err(reason) if !reason.is_empty() => Err(format!(
+            "У этого {label} нет подходящего файла для скачивания: {reason}"
+        )),
+        Err(_) => Err(format!("У этого {label} нет подходящего файла для скачивания")),
+    }
 }

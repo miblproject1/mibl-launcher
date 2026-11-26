@@ -157,7 +157,9 @@ async fn installer_java(entry: &Value, mc_version: &str) -> Option<String> {
         return Some(java);
     }
     // Резерв: подобрать/скачать Temurin нужной мажорной версии.
-    crate::java::ensure_java(mc_version, None).await.ok()
+    crate::java::ensure_java(mc_version, Some(&vjson), None, None)
+        .await
+        .ok()
 }
 
 async fn run_installer(

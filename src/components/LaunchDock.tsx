@@ -19,6 +19,8 @@ interface Props {
   onRefresh: () => Promise<void>;
   account: AccountView | null;
   onOpenSettings: () => void;
+  /** Компактный док для «Главной»: без языка игры и кнопки аккаунта. */
+  compact?: boolean;
 }
 
 export function LaunchDock({
@@ -28,6 +30,7 @@ export function LaunchDock({
   onRefresh,
   account,
   onOpenSettings,
+  compact = false,
 }: Props) {
   const { patch, layout, pixel, hud, t } = useUi();
   const { addNotification } = useNotifications();
@@ -132,42 +135,46 @@ export function LaunchDock({
         </div>
 
         {/* Язык игры */}
-        <div className="flex w-full min-w-[136px] items-center gap-1.5 sm:w-[160px]">
-          <Icon name="globe" size={14} className="shrink-0 text-white/45" />
-          <CustomSelect
-            placement="up"
-            value={language}
-            onChange={(event) => void changeLanguage(event.target.value)}
-          >
-            {UI_LANGUAGES.map((item) => (
-              <option key={item.code} value={item.code}>
-                {item.label}
-              </option>
-            ))}
-          </CustomSelect>
-        </div>
+        {!compact && (
+          <div className="flex w-full min-w-[136px] items-center gap-1.5 sm:w-[160px]">
+            <Icon name="globe" size={14} className="shrink-0 text-white/45" />
+            <CustomSelect
+              placement="up"
+              value={language}
+              onChange={(event) => void changeLanguage(event.target.value)}
+            >
+              {UI_LANGUAGES.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.label}
+                </option>
+              ))}
+            </CustomSelect>
+          </div>
+        )}
 
         {/* Аккаунт */}
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="hidden items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 text-left transition-colors hover:border-white/20 hover:bg-white/[0.07] md:flex"
-          title={t("launch.quickSettings")}
-        >
-          <SkinHead url={account?.skin_data_url} size={26} />
-          <span className="min-w-0">
-            <span className="block max-w-[104px] truncate text-[11px] font-semibold text-white/90">
-              {account?.name ?? t("common.player")}
+        {!compact && (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="hidden items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 text-left transition-colors hover:border-white/20 hover:bg-white/[0.07] md:flex"
+            title={t("launch.quickSettings")}
+          >
+            <SkinHead url={account?.skin_data_url} size={26} />
+            <span className="min-w-0">
+              <span className="block max-w-[104px] truncate text-[11px] font-semibold text-white/90">
+                {account?.name ?? t("common.player")}
+              </span>
+              <span className="block text-[8.5px] uppercase tracking-wide text-white/45">
+                {account?.type === "microsoft"
+                  ? t("kind.microsoft")
+                  : account?.type === "ely"
+                    ? t("kind.ely")
+                    : t("kind.offline")}
+              </span>
             </span>
-            <span className="block text-[8.5px] uppercase tracking-wide text-white/45">
-              {account?.type === "microsoft"
-                ? t("kind.microsoft")
-                : account?.type === "ely"
-                  ? t("kind.ely")
-                  : t("kind.offline")}
-            </span>
-          </span>
-        </button>
+          </button>
+        )}
 
         <Button
           variant={ready ? "play" : "primary"}

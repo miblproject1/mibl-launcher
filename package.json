@@ -1,9 +1,9 @@
 {
   "name": "mibl-launcher",
   "private": true,
-  "version": "2.5.0",
+  "version": "2.7.0",
   "type": "module",
-  "description": "Mibl Launcher 2.5 — Minecraft launcher (Tauri v2 + React)",
+  "description": "Mibl Launcher 2.7 — Minecraft launcher (Tauri v2 + React)",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

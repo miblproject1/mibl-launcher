@@ -407,18 +407,42 @@ pub fn java_path_for(component: &str) -> PathBuf {
 pub fn find_java_fallback() -> Option<String> {
     if let Ok(home) = std::env::var("JAVA_HOME") {
         let p = PathBuf::from(home).join("bin").join("java.exe");
-        if p.is_file() {
+        if crate::java::is_valid_java(&p) {
             return Some(p.to_string_lossy().to_string());
         }
     }
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
+        // Сломанные ярлыки Oracle javapath часто не содержат java.dll.
+        let text = dir.to_string_lossy().to_lowercase().replace('/', "\\");
+        if text.contains("common files\\oracle\\java\\javapath") {
+            continue;
+        }
         let p = dir.join("java.exe");
-        if p.is_file() {
+        if crate::java::is_valid_java(&p) {
             return Some(p.to_string_lossy().to_string());
         }
     }
     None
+}
+
+fn local_java_ok(local: &Path, major: Option<u32>) -> bool {
+    crate::java::is_valid_java(local)
+        && major
+            .map(|required| crate::java::java_major_of(local) == Some(required))
+            .unwrap_or(true)
+}
+
+/// Резерв, если Mojang-рантайм не скачался: подобрать/скачать нужную Java
+/// (включая Java 25 для Minecraft 26.x) через Adoptium.
+async fn fallback_java(
+    major: Option<u32>,
+    task: Option<&TaskHandle>,
+) -> Result<Option<String>, String> {
+    if let Some(required) = major {
+        return crate::java::ensure_major(required, None, task).await.map(Some);
+    }
+    Ok(find_java_fallback())
 }
 
 /// Путь к java для версии; скачивает окружение Mojang при необходимости.
@@ -426,6 +450,7 @@ pub async fn ensure_java(
     vjson: &Value,
     task: Option<&TaskHandle>,
 ) -> Result<Option<String>, String> {
+    let major = crate::java::manifest_java_major(vjson);
     let component = vjson
         .get("javaVersion")
         .and_then(|v| v.get("component"))
@@ -433,7 +458,7 @@ pub async fn ensure_java(
         .unwrap_or("jre-legacy");
 
     let local = java_path_for(component);
-    if local.is_file() {
+    if local_java_ok(&local, major) {
         return Ok(Some(local.to_string_lossy().to_string()));
     }
 
@@ -441,12 +466,18 @@ pub async fn ensure_java(
         Ok(v) => v,
         Err(e) => {
             eprintln!("[java] all.json: {e}");
-            return Ok(find_java_fallback());
+            return fallback_java(major, task).await;
         }
     };
 
     let platform = all.get("windows-x64");
-    let candidates = ["component", "java-runtime-gamma", "jre-legacy"];
+    let candidates = [
+        "component",
+        "java-runtime-epsilon",
+        "java-runtime-delta",
+        "java-runtime-gamma",
+        "jre-legacy",
+    ];
     let mut manifest_url: Option<String> = None;
     for key in candidates {
         let name = if key == "component" { component } else { key };
@@ -463,7 +494,7 @@ pub async fn ensure_java(
         }
     }
     let Some(url) = manifest_url else {
-        return Ok(find_java_fallback());
+        return fallback_java(major, task).await;
     };
 
     let manifest = http::get_json(&url).await?;
@@ -528,10 +559,10 @@ pub async fn ensure_java(
         eprintln!("[java] {failed} файлов не скачано");
     }
 
-    if local.is_file() {
+    if local_java_ok(&local, major) {
         Ok(Some(local.to_string_lossy().to_string()))
     } else {
-        Ok(find_java_fallback())
+        fallback_java(major, task).await
     }
 }
 

@@ -10,6 +10,8 @@ interface Props {
   account: AccountView | null;
   onOpenSkinSettings: () => void;
   className?: string;
+  /** Компактный режим без стеклянной панели, шапки и подвала — только модель. */
+  bare?: boolean;
 }
 
 const MAX_YAW = 0.82; // ~47° влево/вправо
@@ -116,7 +118,7 @@ function defaultSkinDataUrl(): string {
   return cachedDefaultSkin;
 }
 
-export default function HeroSkinViewer({ account, onOpenSkinSettings, className }: Props) {
+export default function HeroSkinViewer({ account, onOpenSkinSettings, className, bare = false }: Props) {
   const { t } = useUi();
   const hostRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
@@ -283,6 +285,32 @@ export default function HeroSkinViewer({ account, onOpenSkinSettings, className 
       host.replaceChildren();
     };
   }, [localSkin, elyNick]);
+
+  if (bare) {
+    return (
+      <div className={cn("relative h-full w-full", className)}>
+        <div className="absolute inset-0">
+          <div
+            ref={hostRef}
+            className="absolute inset-0 cursor-grab touch-none active:cursor-grabbing"
+            aria-label={t("hero.aria")}
+          />
+          {!ready && !failed && (
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-[10.5px] text-white/55">
+              <Spinner size={18} />
+              {t("hero.loading")}
+            </div>
+          )}
+          {failed && (
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/55">
+              <Icon name="users" size={42} />
+              <span className="text-[10.5px]">{t("hero.failed")}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <section

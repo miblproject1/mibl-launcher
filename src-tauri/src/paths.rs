@@ -123,6 +123,13 @@ pub fn instance_meta_path(name: &str) -> PathBuf {
     instance_dir(name).join("instance.json")
 }
 
+/// Глобальная папка бэкапов: `%APPDATA%\MiblLauncher\backups\<имя_сборки>`.
+///
+/// Каталог создаётся вызывающим кодом по требованию.
+pub fn backups_root(instance: &str) -> PathBuf {
+    data_dir().join("backups").join(safe_name(instance))
+}
+
 /// Замена запрещённых для Windows символов (как `safe_name` в Python).
 pub fn safe_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());

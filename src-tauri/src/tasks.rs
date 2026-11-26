@@ -105,6 +105,16 @@ impl TaskHandle {
         self.sync(true);
     }
 
+    /// Начать новый этап задачи (скачали архив — перешли к распаковке).
+    pub fn reset(&self, total: u64, detail: impl Into<String>) {
+        self.done.store(0, Ordering::Relaxed);
+        self.total.store(total, Ordering::Relaxed);
+        *self.detail.lock().unwrap() = detail.into();
+        *self.speed.lock().unwrap() = 0.0;
+        *self.sample.lock().unwrap() = (0, Instant::now());
+        self.sync(true);
+    }
+
     pub fn add(&self, n: u64) {
         self.done.fetch_add(n, Ordering::Relaxed);
         self.sync(false);

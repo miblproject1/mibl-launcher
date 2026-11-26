@@ -46,14 +46,17 @@ const KINDS: Array<{
 interface Props {
   instances: InstanceView[];
   onRefresh: () => Promise<void>;
+  onOpenSettings?: () => void;
+  hasCurseKey?: boolean;
 }
 
-export default function ModsTab({ instances, onRefresh }: Props) {
+export default function ModsTab({ instances, onRefresh, onOpenSettings, hasCurseKey }: Props) {
   const { addNotification } = useNotifications();
   const { t } = useUi();
   const [instanceName, setInstanceName] = useState(instances[0]?.name ?? "");
   const [kind, setKind] = useState<ContentKind>("mod");
-  const [source, setSource] = useState<ModpackSource>("all");
+  // Modrinth не требует ключа — каталог открывается без ошибок CurseForge.
+  const [source, setSource] = useState<ModpackSource>("modrinth");
   const [view, setView] = useState<"browse" | "installed">("browse");
   const [query, setQuery] = useState("");
   const [useFilters, setUseFilters] = useState(true);
@@ -121,6 +124,16 @@ export default function ModsTab({ instances, onRefresh }: Props) {
 
   const kindInfo = KINDS.find((item) => item.key === kind) ?? KINDS[0];
 
+  // CurseForge доступен и без личного ключа: бэкенд автоматически использует
+  // публичный прокси api.curse.tools, поэтому поиск больше не блокируем.
+  const curseMissing = false;
+
+  // Ответ «нет API-ключа» — не ошибка сервера, а спокойная подсказка.
+  const needsCurseKey = useMemo(
+    () => curseMissing || /API[- ]?ключ|api key/i.test(searchError ?? ""),
+    [curseMissing, searchError],
+  );
+
   const loadContent = useCallback(async () => {
     if (!selected) {
       setContent([]);
@@ -148,6 +161,15 @@ export default function ModsTab({ instances, onRefresh }: Props) {
         setTotal(0);
         return;
       }
+      if (curseMissing) {
+        setSearching(false);
+        setSearchError(null);
+        setSearchNotice(null);
+        setResults([]);
+        setTotal(0);
+        setOffset(0);
+        return;
+      }
       setSearching(true);
       setSearchError(null);
       setSearchNotice(null);
@@ -172,7 +194,7 @@ export default function ModsTab({ instances, onRefresh }: Props) {
         setSearching(false);
       }
     },
-    [selected, searchLoader, query, kind, source, useFilters, mcFilter],
+    [selected, searchLoader, query, kind, source, useFilters, mcFilter, curseMissing],
   );
 
   useEffect(() => {
@@ -333,26 +355,28 @@ export default function ModsTab({ instances, onRefresh }: Props) {
                   </div>
                 </div>
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-                  <div className="relative flex-1">
-                    <Icon
-                      name="search"
-                      size={16}
-                      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"
-                    />
-                    <TextInput
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") void search(0, false);
-                      }}
-                      placeholder={t("content.searchPlaceholder")}
-                      className="h-10 pl-9 pr-24"
-                    />
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <div className="relative min-w-0 flex-1">
+                      <Icon
+                        name="search"
+                        size={16}
+                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"
+                      />
+                      <TextInput
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void search(0, false);
+                        }}
+                        placeholder={t("content.searchPlaceholder")}
+                        className="h-10 w-full pl-9"
+                      />
+                    </div>
                     <Button
                       variant="primary"
-                      size="xs"
+                      size="sm"
                       icon="search"
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2"
+                      className="shrink-0 whitespace-nowrap"
                       loading={searching}
                       onClick={() => void search(0, false)}
                     >
@@ -374,14 +398,49 @@ export default function ModsTab({ instances, onRefresh }: Props) {
                 </div>
               </div>
 
-              {searchError && (
-                <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-400/25 bg-rose-500/10 p-3 text-[11.5px] text-rose-100">
-                  <Icon name="alert" size={15} className="mt-[1px] shrink-0" />
-                  <span className="break-all">{searchError}</span>
+              {needsCurseKey ? (
+                <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
+                  <div className="flex items-start gap-2.5">
+                    <Icon name="info" size={15} className="mt-[2px] shrink-0 text-[var(--accent)]" />
+                    <div className="min-w-0">
+                      <div className="text-[12px] font-semibold text-[var(--fg)]">
+                        {t("modpacks.curseKeyTitle")}
+                      </div>
+                      <p className="mt-1 text-[11px] leading-relaxed muted">
+                        {t("modpacks.curseKeyText")}
+                      </p>
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="soft"
+                          size="sm"
+                          icon="settings"
+                          disabled={!onOpenSettings}
+                          onClick={onOpenSettings}
+                        >
+                          {t("modpacks.openKeySettings")}
+                        </Button>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          icon="search"
+                          onClick={() => setSource("modrinth")}
+                        >
+                          {t("modpacks.searchInModrinth")}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
+              ) : (
+                searchError && (
+                  <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-400/25 bg-rose-500/10 p-3 text-[11.5px] text-rose-100">
+                    <Icon name="alert" size={15} className="mt-[1px] shrink-0" />
+                    <span className="break-all">{searchError}</span>
+                  </div>
+                )
               )}
 
-              {searchNotice && (
+              {!needsCurseKey && searchNotice && (
                 <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-400/25 bg-amber-400/10 p-3 text-[11.5px] text-amber-100">
                   <Icon name="info" size={15} className="mt-[1px] shrink-0" />
                   <span className="leading-relaxed">{searchNotice}</span>
@@ -406,15 +465,17 @@ export default function ModsTab({ instances, onRefresh }: Props) {
                   ))}
                 </div>
               ) : results.length === 0 ? (
-                <EmptyState
-                  icon="search"
-                  title={t("content.nothingFound")}
-                  text={
-                    searchError
-                      ? t("content.checkConnection")
-                      : t("content.tryOther")
-                  }
-                />
+                needsCurseKey ? null : (
+                  <EmptyState
+                    icon="search"
+                    title={t("content.nothingFound")}
+                    text={
+                      searchError
+                        ? t("content.checkConnection")
+                        : t("content.tryOther")
+                    }
+                  />
+                )
               ) : (
                 <>
                   <div className="card-grid">

@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "mibl-launcher"
-version = "2.5.0"
+version = "2.7.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",

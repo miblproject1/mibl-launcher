@@ -28,8 +28,7 @@ const HUD_LABEL_KEYS: Record<HudKey, TranslationKey> = {
   instance: "hud.instance",
   play: "hud.play",
   hero: "hud.hero",
-  left: "hud.left",
-  right: "hud.right",
+  account: "hud.account",
   nav: "hud.nav",
 };
 
@@ -37,8 +36,7 @@ const HUD_DESC_KEYS: Record<HudKey, TranslationKey> = {
   instance: "hud.desc.instance",
   play: "hud.desc.play",
   hero: "hud.desc.hero",
-  left: "hud.desc.left",
-  right: "hud.desc.right",
+  account: "hud.desc.account",
   nav: "hud.desc.nav",
 };
 

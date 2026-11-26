@@ -15,6 +15,7 @@ import { ThemeProvider, useTheme } from "./context/ThemeContext";
 import { NotificationProvider, useNotifications } from "./context/NotificationContext";
 import { UiProvider, useUi } from "./context/UiContext";
 import Background from "./components/Background";
+import ChristmasDecorLayer from "./components/ChristmasDecorLayer";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { TopNav } from "./components/TopNav";
@@ -55,7 +56,7 @@ function Splash({ error, onRetry }: { error: string | null; onRetry: () => void 
           M
         </div>
         <h1 className="text-[22px] font-semibold tracking-tight text-white">Mibl Launcher</h1>
-        <p className="mt-1 text-[11px] font-semibold tracking-[0.28em] text-white/50">VERSION 2.5.0</p>
+        <p className="mt-1 text-[11px] font-semibold tracking-[0.28em] text-white/50">VERSION 2.7.0 · CHRISTMAS</p>
 
         {error ? (
           <div className="mt-5 space-y-4">
@@ -75,6 +76,83 @@ function Splash({ error, onRetry }: { error: string | null; onRetry: () => void 
         )}
       </div>
     </div>
+  );
+}
+
+function ChristmasBox() {
+  const { christmas, setChristmas, t } = useUi();
+  const { addNotification } = useNotifications();
+
+  if (christmas) return null;
+
+  const open = () => {
+    setChristmas(true);
+    addNotification({ type: "success", message: t("christmas.enabled") });
+  };
+
+  return (
+    <button
+      type="button"
+      className="christmas-box"
+      onClick={open}
+      title={t("christmas.boxTitle")}
+      aria-label={t("christmas.boxTitle")}
+    >
+      <svg width="88" height="94" viewBox="0 0 88 94" fill="none" aria-hidden="true">
+        <ellipse cx="44" cy="88" rx="30" ry="5" fill="rgba(4, 10, 24, 0.45)" />
+        {/* Игрушки выглядывают из коробки */}
+        <circle cx="28" cy="28" r="7.5" fill="#ff6b6b" stroke="#ffe4e6" strokeWidth="1.4" />
+        <circle cx="28" cy="28" r="2.6" fill="#ffd7d7" />
+        <circle cx="58" cy="25" r="6.5" fill="#7dd3fc" stroke="#e0f2fe" strokeWidth="1.4" />
+        <circle cx="58" cy="25" r="2.2" fill="#d8f3ff" />
+        <path
+          d="M44 10 C 40 16 40 22 44 28 C 48 22 48 16 44 10 Z"
+          fill="#ffe29a"
+          stroke="#fff6cf"
+          strokeWidth="1.2"
+        />
+        <path
+          d="M68 34 C 74 28 80 30 79 36 C 78 42 71 42 66 40"
+          stroke="#fca5a5"
+          strokeWidth="3.4"
+          strokeLinecap="round"
+        />
+
+        {/* Корпус подарка */}
+        <rect x="13" y="44" width="62" height="38" rx="4" fill="#a93444" />
+        <rect x="13" y="44" width="62" height="10" rx="4" fill="#c94455" />
+        <rect x="38" y="44" width="12" height="38" fill="#ffd166" />
+        <rect x="38" y="44" width="4" height="38" fill="#ffe6a3" />
+        <rect x="13" y="44" width="62" height="38" rx="4" stroke="rgba(255,255,255,0.22)" strokeWidth="1.4" />
+
+        {/* Крышка */}
+        <rect x="9" y="35" width="70" height="13" rx="3" fill="#c94455" />
+        <rect x="9" y="35" width="70" height="4" rx="2" fill="#e26675" />
+        <rect x="38" y="31" width="12" height="17" fill="#ffd166" />
+        <rect x="38" y="31" width="4" height="17" fill="#ffe6a3" />
+
+        {/* Бант */}
+        <path
+          d="M44 32 C 34 18 20 22 26 31 C 31 38 40 35 44 32 Z"
+          fill="#ffe29a"
+          stroke="#fff6cf"
+          strokeWidth="1.2"
+        />
+        <path
+          d="M44 32 C 54 18 68 22 62 31 C 57 38 48 35 44 32 Z"
+          fill="#ffe29a"
+          stroke="#fff6cf"
+          strokeWidth="1.2"
+        />
+        <circle cx="44" cy="32" r="4.2" fill="#ffd166" stroke="#fff6cf" strokeWidth="1.2" />
+
+        {/* Снежные точки */}
+        <circle cx="20" cy="60" r="1.6" fill="rgba(255,255,255,0.75)" />
+        <circle cx="66" cy="70" r="1.4" fill="rgba(255,255,255,0.65)" />
+        <circle cx="26" cy="75" r="1.2" fill="rgba(255,255,255,0.55)" />
+      </svg>
+      <span className="christmas-box-label">{t("christmas.boxShort")}</span>
+    </button>
   );
 }
 
@@ -188,12 +266,7 @@ function AppContent({ boot }: { boot: Bootstrap }) {
         return (
           <HomeTab
             account={activeAccount}
-            instances={instances}
-            selected={selectedInstance}
-            onSelect={(name) => patch({ instance: name })}
             onOpenSettings={() => setQuickOpen(true)}
-            onOpenInstances={() => changePage("instances")}
-            onOpenModpacks={() => changePage("modpacks")}
             onOpenHud={() => setHudOpen(true)}
           />
         );
@@ -210,13 +283,22 @@ function AppContent({ boot }: { boot: Bootstrap }) {
           />
         );
       case "content":
-        return <ModsTab instances={instances} onRefresh={refreshInstances} />;
+        return (
+          <ModsTab
+            instances={instances}
+            onRefresh={refreshInstances}
+            onOpenSettings={() => changePage("settings")}
+            hasCurseKey={Boolean(config.curseforge_api_key?.trim())}
+          />
+        );
       case "modpacks":
         return (
           <ModpacksTab
             instances={instances}
             onRefresh={refreshInstances}
             onOpenInstances={() => changePage("instances")}
+            onOpenSettings={() => changePage("settings")}
+            hasCurseKey={Boolean(config.curseforge_api_key?.trim())}
           />
         );
       case "theme":
@@ -240,7 +322,7 @@ function AppContent({ boot }: { boot: Bootstrap }) {
 
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden text-[var(--fg)]">
-      <Background theme={theme} lifted={dockVisible} />
+      <Background theme={theme} lifted={dockVisible} showTree={page === "home"} />
 
       <div className="relative z-10 flex min-h-0 flex-1 flex-col">
         <TitleBar account={activeAccount} onOpenSettings={() => setQuickOpen(true)} />
@@ -303,6 +385,7 @@ function AppContent({ boot }: { boot: Bootstrap }) {
 
       {dockVisible && (
         <LaunchDock
+          compact={page === "home"}
           instances={instances}
           selected={selectedInstance}
           onSelect={(name) => patch({ instance: name })}
@@ -334,6 +417,9 @@ function AppContent({ boot }: { boot: Bootstrap }) {
           addNotification({ type: "success", message: t("app.hudSaved") })
         }
       />
+
+      <ChristmasDecorLayer />
+      <ChristmasBox />
     </div>
   );
 }

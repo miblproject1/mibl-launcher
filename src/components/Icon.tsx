@@ -45,7 +45,8 @@ export type IconName =
   | "image"
   | "video"
   | "font"
-  | "sun";
+  | "sun"
+  | "gift";
 
 const PATHS: Record<IconName, string> = {
   grid: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
@@ -99,6 +100,7 @@ const PATHS: Record<IconName, string> = {
   video: "M4 6h11v12H4zM15 10l5-3v10l-5-3",
   font: "M5 20L12 4l7 16M8.5 13.5h7",
   sun: "M12 17a5 5 0 100-10 5 5 0 000 10zM12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4",
+  gift: "M4 11h16v9H4zM3 8h18v3H3zM12 8v12M12 8C9 8 7 6.8 7 5.4 7 4.2 8 3.4 9.2 3.8 10.7 4.3 12 6.2 12 8zM12 8c3 0 5-1.2 5-2.6 0-1.2-1-2-2.2-1.6C13.3 4.3 12 6.2 12 8z",
 };
 
 interface IconProps extends SVGProps<SVGSVGElement> {

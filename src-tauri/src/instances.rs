@@ -1,6 +1,6 @@
 //! Сборки (instances), локальный контент, бэкапы, RAM/JVM.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 
@@ -15,9 +15,14 @@ pub const KIND_DIRS: [(&str, &str); 3] = [
 ];
 
 pub fn content_dir(instance: &str, kind: &str) -> PathBuf {
+    let normalized = match kind.to_lowercase().as_str() {
+        "shader" | "shaders" | "shaderpack" | "shaderpacks" => "shader",
+        "resourcepack" | "resourcepacks" | "texturepack" | "texturepacks" => "resourcepack",
+        _ => "mod",
+    };
     let sub = KIND_DIRS
         .iter()
-        .find(|(k, _)| *k == kind)
+        .find(|(k, _)| *k == normalized)
         .map(|(_, d)| *d)
         .unwrap_or("mods");
     paths::game_dir(instance).join(sub)
@@ -27,6 +32,21 @@ pub fn load(name: &str) -> Option<Instance> {
     let path = paths::instance_meta_path(name);
     let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str::<Instance>(&text).ok()
+}
+
+/// Уникальное имя сборки: «Pack», «Pack (2)», «Pack (3)»…
+pub fn unique_name(base: &str) -> String {
+    let base = paths::safe_name(base);
+    if !paths::instance_dir(&base).exists() {
+        return base;
+    }
+    for n in 2..1000 {
+        let candidate = paths::safe_name(&format!("{base} ({n})"));
+        if !paths::instance_dir(&candidate).exists() {
+            return candidate;
+        }
+    }
+    format!("{base} ({})", timestamp())
 }
 
 pub fn save(meta: &Instance) -> Result<Instance, String> {
@@ -123,6 +143,9 @@ pub fn update(name: &str, patch: InstancePatch) -> Result<Instance, String> {
         } else {
             v.trim().to_string()
         };
+    }
+    if let Some(v) = patch.auto_backup {
+        meta.auto_backup = v;
     }
     save(&meta)
 }
@@ -269,56 +292,7 @@ pub fn delete_content(path: &str) -> Result<(), String> {
     std::fs::remove_file(path).map_err(|e| e.to_string())
 }
 
-// ------------------------------------------------------------------- backup
-pub fn backup_worlds(instance: &str) -> Result<PathBuf, String> {
-    let src = paths::game_dir(instance).join("saves");
-    if !src.is_dir() {
-        return Err("Папка saves пуста — нечего сохранять".into());
-    }
-    let bdir = paths::instance_dir(instance).join("backups");
-    std::fs::create_dir_all(&bdir).map_err(|e| e.to_string())?;
-    let stamp = timestamp();
-    let dest = bdir.join(format!("worlds-{stamp}.zip"));
-
-    let file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
-    let mut zip = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-
-    fn walk(
-        zip: &mut zip::ZipWriter<std::fs::File>,
-        root: &Path,
-        dir: &Path,
-        options: zip::write::SimpleFileOptions,
-        count: &mut usize,
-    ) -> Result<(), String> {
-        let entries = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(zip, root, &path, options, count)?;
-            } else if path.is_file() {
-                let rel = path.strip_prefix(root).unwrap_or(&path);
-                let name = format!("saves/{}", rel.to_string_lossy().replace('\\', "/"));
-                zip.start_file(name, options).map_err(|e| e.to_string())?;
-                let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-                std::io::copy(&mut f, zip).map_err(|e| e.to_string())?;
-                *count += 1;
-            }
-        }
-        Ok(())
-    }
-
-    let mut count = 0usize;
-    walk(&mut zip, &src, &src, options, &mut count)?;
-    zip.finish().map_err(|e| e.to_string())?;
-    if count == 0 {
-        let _ = std::fs::remove_file(&dest);
-        return Err("В папке saves нет файлов".into());
-    }
-    Ok(dest)
-}
-
+// --------------------------------------------------- время (имена архивов)
 pub fn timestamp() -> String {
     let secs = now() as i64;
     // грубый UTC→локальное смещение не критично для имени файла

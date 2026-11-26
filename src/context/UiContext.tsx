@@ -52,9 +52,77 @@ export const DEFAULT_LAYOUT: LayoutSettings = {
 
 const STORAGE_KEY = "mibl.layout.v24";
 
-/* ------------------------------------------------------------------ HUD 2.5.0 */
+/* ------------------------------------------------------- Christmas 2.7.0 */
+/** Стили гирлянд, которые можно перетащить из коробки в настройках. */
+export type GarlandStyle = "classic" | "gold" | "ice";
+
+export interface PlacedGarland {
+  id: string;
+  style: GarlandStyle;
+  /** Позиция в процентах от ширины/высоты окна лаунчера. */
+  x: number;
+  y: number;
+}
+
+export interface GarlandDraft {
+  style: GarlandStyle;
+  x: number;
+  y: number;
+}
+
+export const GARLAND_STYLES: GarlandStyle[] = ["classic", "gold", "ice"];
+
+const CHRISTMAS_KEY = "mibl.christmas.v270";
+const TREE_LIGHTS_KEY = "mibl.christmas.tree.v270";
+const GARLANDS_KEY = "mibl.christmas.garlands.v270";
+
+function clampPercent(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(99, Math.max(1, parsed));
+}
+
+function isGarlandStyle(value: unknown): value is GarlandStyle {
+  return value === "classic" || value === "gold" || value === "ice";
+}
+
+function readFlag(key: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function readGarlands(): PlacedGarland[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(GARLANDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item): item is Partial<PlacedGarland> =>
+          Boolean(item) && typeof item === "object",
+      )
+      .filter((item) => isGarlandStyle(item.style))
+      .slice(-60)
+      .map((item, index) => ({
+        id: typeof item.id === "string" && item.id ? item.id : `garland-${index}`,
+        style: item.style as GarlandStyle,
+        x: clampPercent(item.x, 50),
+        y: clampPercent(item.y, 50),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/* ------------------------------------------------------------------ HUD 2.6.0 */
 /** Элементы главного экрана, которые можно двигать и перекрашивать. */
-export type HudKey = "instance" | "play" | "hero" | "left" | "right" | "nav";
+export type HudKey = "instance" | "play" | "hero" | "account" | "nav";
 export type HudVariant = "glass" | "solid" | "outline" | "ghost";
 
 export interface HudElement {
@@ -69,7 +137,7 @@ export interface HudElement {
 
 export type HudSettings = Record<HudKey, HudElement>;
 
-export const HUD_KEYS: HudKey[] = ["instance", "play", "hero", "left", "right", "nav"];
+export const HUD_KEYS: HudKey[] = ["instance", "play", "hero", "account", "nav"];
 
 const HUD_STORAGE_KEY = "mibl.hud.v241";
 
@@ -90,8 +158,7 @@ export function defaultHud(): HudSettings {
     instance: defaultHudElement(),
     play: defaultHudElement(),
     hero: defaultHudElement(),
-    left: defaultHudElement(),
-    right: defaultHudElement(),
+    account: defaultHudElement(),
     nav: defaultHudElement(),
   };
 }
@@ -200,6 +267,21 @@ interface UiContextValue {
   /** Язык интерфейса лаунчера (не язык игры Minecraft). */
   language: Language;
   setLanguage: (language: Language) => void;
+  /** Рождественская тема 2.7.0. */
+  christmas: boolean;
+  setChristmas: (value: boolean) => void;
+  /** Гирлянда на новогодней ёлке. */
+  treeLights: boolean;
+  setTreeLights: (value: boolean) => void;
+  /** Гирлянды, перетащенные из коробки в настройках. */
+  garlands: PlacedGarland[];
+  addGarland: (style: GarlandStyle, x: number, y: number) => void;
+  removeGarland: (id: string) => void;
+  clearGarlands: () => void;
+  /** Гирлянда, которую пользователь прямо сейчас тянет из коробки. */
+  garlandDraft: GarlandDraft | null;
+  setGarlandDraft: (draft: GarlandDraft | null) => void;
+
   /** Перевод по ключу с подстановками вида `{name}`. */
   t: (key: TranslationKey, vars?: Record<string, string | number>) => string;
   pixel: boolean;
@@ -227,6 +309,10 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [hud, setHud] = useState<HudSettings>(readHud);
   const [typography, setTypography] = useState<TypographySettings>(readTypography);
   const [language, setLanguageState] = useState<Language>(detectLanguage);
+  const [christmas, setChristmasState] = useState<boolean>(() => readFlag(CHRISTMAS_KEY));
+  const [treeLights, setTreeLightsState] = useState<boolean>(() => readFlag(TREE_LIGHTS_KEY));
+  const [garlands, setGarlands] = useState<PlacedGarland[]>(readGarlands);
+  const [garlandDraft, setGarlandDraft] = useState<GarlandDraft | null>(null);
 
   // Язык интерфейса: сохраняем выбор и сообщаем его браузеру/WebView.
   useEffect(() => {
@@ -237,6 +323,62 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const setLanguage = useCallback((next: Language) => {
     setLanguageState(next);
   }, []);
+
+  const setChristmas = useCallback((value: boolean) => {
+    setChristmasState(value);
+  }, []);
+
+  const setTreeLights = useCallback((value: boolean) => {
+    setTreeLightsState(value);
+  }, []);
+
+  const addGarland = useCallback((style: GarlandStyle, x: number, y: number) => {
+    setGarlands((prev) => [
+      ...prev.slice(-59),
+      {
+        id: `garland-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        style,
+        x: clampPercent(x, 50),
+        y: clampPercent(y, 50),
+      },
+    ]);
+  }, []);
+
+  const removeGarland = useCallback((id: string) => {
+    setGarlands((prev) => prev.filter((garland) => garland.id !== id));
+  }, []);
+
+  const clearGarlands = useCallback(() => {
+    setGarlands([]);
+  }, []);
+
+  // Рождественская тема: CSS-снежные шапки включаются через data-атрибут на
+  // <html>, поэтому успеваем до первой отрисовки.
+  useLayoutEffect(() => {
+    document.documentElement.dataset.christmas = christmas ? "on" : "off";
+    try {
+      window.localStorage.setItem(CHRISTMAS_KEY, christmas ? "1" : "0");
+    } catch {
+      // Настройка просто не сохранится между запусками.
+    }
+  }, [christmas]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(TREE_LIGHTS_KEY, treeLights ? "1" : "0");
+    } catch {
+      // Гирлянда на ёлке не сохранится между запусками.
+    }
+  }, [treeLights]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(GARLANDS_KEY, JSON.stringify(garlands));
+    } catch {
+      // Размещённые гирлянды не сохранятся между запусками.
+    }
+  }, [garlands]);
+
 
   const t = useCallback(
     (key: TranslationKey, vars?: Record<string, string | number>) =>
@@ -310,6 +452,16 @@ export function UiProvider({ children }: { children: ReactNode }) {
       typography,
       language,
       setLanguage,
+      christmas,
+      setChristmas,
+      treeLights,
+      setTreeLights,
+      garlands,
+      addGarland,
+      removeGarland,
+      clearGarlands,
+      garlandDraft,
+      setGarlandDraft,
       t,
       pixel: layout.style === "pixel",
       patch,
@@ -325,6 +477,15 @@ export function UiProvider({ children }: { children: ReactNode }) {
       typography,
       language,
       setLanguage,
+      christmas,
+      setChristmas,
+      treeLights,
+      setTreeLights,
+      garlands,
+      addGarland,
+      removeGarland,
+      clearGarlands,
+      garlandDraft,
       t,
       patch,
       patchHud,

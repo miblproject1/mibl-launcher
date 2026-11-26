@@ -39,7 +39,7 @@ export function Sidebar({
           <span className="mt-1 h-2 w-2 rounded-full bg-[var(--accent)] shadow-[0_0_10px_var(--accent)]" />
         </div>
         <div className="mt-1.5 text-[10px] font-semibold tracking-[0.34em] text-white/65">
-          {t("sidebar.launcher")} 2.5.0
+          {t("sidebar.launcher")} 2.7.0
         </div>
         <div className="mt-2 text-[11px] font-medium text-white/60">
           {t("sidebar.tagline")}

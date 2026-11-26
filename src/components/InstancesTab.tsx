@@ -39,8 +39,12 @@ import {
   Spinner,
   TextArea,
   TextInput,
+  Toggle,
 } from "./ui";
 import { CustomSelect } from "./CustomSelect";
+import { WorldBackupsModal } from "./WorldBackupsModal";
+import { ImportLaunchersModal } from "./ImportLaunchersModal";
+import { ScreenshotsModal } from "./ScreenshotsModal";
 
 const HeroSkinViewer = lazy(() => import("./HeroSkinViewer"));
 
@@ -85,6 +89,7 @@ interface EditForm {
   quick_play_mode: string;
   quick_play_target: string;
   game_language: string;
+  auto_backup: boolean;
 }
 
 interface Notice {
@@ -122,9 +127,12 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
     quick_play_mode: "off",
     quick_play_target: "",
     game_language: "ru_ru",
+    auto_backup: false,
   });
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<InstanceView | null>(null);
+  const [backupsFor, setBackupsFor] = useState<InstanceView | null>(null);
+  const [importOtherOpen, setImportOtherOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -132,6 +140,7 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
   const [fpsResult, setFpsResult] = useState<UltraFpsResult | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [importing, setImporting] = useState(false);
+  const [screenshotsFor, setScreenshotsFor] = useState<InstanceView | null>(null);
 
   const isBusy = (name: string, action: string) => Boolean(busy[`${name}:${action}`]);
 
@@ -315,6 +324,7 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
       quick_play_mode: instance.quick_play_mode || "off",
       quick_play_target: instance.quick_play_target || "",
       game_language: instance.game_language || "ru_ru",
+      auto_backup: Boolean(instance.auto_backup),
     });
     setMenuFor(null);
   };
@@ -340,6 +350,7 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
         quick_play_mode: editForm.quick_play_mode,
         quick_play_target: editForm.quick_play_target.trim(),
         game_language: editForm.game_language,
+        auto_backup: editForm.auto_backup,
       });
       setEditing(null);
       await onRefresh();
@@ -370,16 +381,6 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
       await api.installInstance(instance.name);
       addNotification({ type: "info", message: t("launch.installing", { name: instance.name }) });
       await onRefresh();
-    });
-
-  const backup = (instance: InstanceView) =>
-    runAction(instance.name, "backup", async () => {
-      const path = await api.backupInstance(instance.name);
-      setNotice({
-        title: t("inst.backupTitle"),
-        message: t("inst.backupText"),
-        path,
-      });
     });
 
   const exportInstance = (instance: InstanceView) =>
@@ -460,6 +461,9 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
         subtitle={t("inst.subtitle")}
         actions={
           <>
+            <Button variant="outline" icon="folder" onClick={() => setImportOtherOpen(true)}>
+              {t("inst.importOther")}
+            </Button>
             <Button variant="outline" icon="upload" onClick={() => void importModpack()} loading={importing}>
               {t("inst.importMrpack")}
             </Button>
@@ -475,7 +479,7 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
           <div className="glass relative flex flex-1 flex-col justify-center gap-3 overflow-hidden p-5">
             <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-[var(--accent-soft)] blur-3xl" />
             <div className="relative">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.24em] muted">Mibl Launcher 2.4</div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.24em] muted">Mibl Launcher 2.6</div>
               <h2 className="mt-1 text-[21px] font-semibold leading-tight text-[var(--fg)]">
                 {account ? (
                   <>
@@ -563,6 +567,9 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
               </Button>
               <Button variant="outline" icon="upload" onClick={() => void importModpack()}>
                 {t("inst.import")}
+              </Button>
+              <Button variant="outline" icon="folder" onClick={() => setImportOtherOpen(true)}>
+                {t("inst.importOther")}
               </Button>
             </div>
           }
@@ -661,11 +668,10 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
                             <MenuItem icon="edit" label={t("inst.menuEdit")} onClick={() => openEdit(instance)} />
                             <MenuItem
                               icon="archive"
-                              label={t("inst.menuBackup")}
-                              busy={isBusy(instance.name, "backup")}
+                              label={t("inst.menuBackups")}
                               onClick={() => {
                                 setMenuFor(null);
-                                void backup(instance);
+                                setBackupsFor(instance);
                               }}
                             />
                             <MenuItem
@@ -954,6 +960,21 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
               className="min-h-[120px] font-mono text-[11px]"
             />
           </Field>
+
+          <div className="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-black/15 px-3 py-2.5 sm:col-span-2">
+            <div className="min-w-0">
+              <div className="text-[11.5px] font-semibold text-[var(--fg)]">
+                {t("inst.autoBackup")}
+              </div>
+              <div className="mt-0.5 text-[10px] leading-snug muted">
+                {t("inst.autoBackupHint")}
+              </div>
+            </div>
+            <Toggle
+              checked={editForm.auto_backup}
+              onChange={(auto_backup) => setEditForm((prev) => ({ ...prev, auto_backup }))}
+            />
+          </div>
         </div>
       </Modal>
 
@@ -1110,6 +1131,18 @@ export default function InstancesTab({ instances, system, defaultRamMb, account,
           </div>
         )}
       </Modal>
+
+      <WorldBackupsModal
+        open={Boolean(backupsFor)}
+        instance={backupsFor}
+        onClose={() => setBackupsFor(null)}
+      />
+
+      <ImportLaunchersModal
+        open={importOtherOpen}
+        onClose={() => setImportOtherOpen(false)}
+        onRefresh={onRefresh}
+      />
     </div>
   );
 }

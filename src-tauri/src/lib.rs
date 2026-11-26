@@ -1,8 +1,9 @@
-//! Mibl Launcher 2.4 — локальный лаунчер Minecraft (Tauri v2).
+//! Mibl Launcher 2.6 — локальный лаунчер Minecraft (Tauri v2).
 
 mod accounts;
 mod archive;
 mod auth;
+mod backups;
 mod commands;
 mod crash;
 mod curse;
@@ -12,6 +13,7 @@ mod install;
 mod instances;
 mod java;
 mod launch;
+mod launcher_import;
 mod loaders;
 mod models;
 mod modrinth;
@@ -70,7 +72,15 @@ pub fn run() {
             commands::microsoft_login_start,
             commands::microsoft_login_poll,
             commands::microsoft_refresh_account,
-            commands::backup_instance,
+            commands::list_world_backups,
+            commands::backup_worlds_now,
+            commands::restore_world_backup,
+            commands::delete_world_backup,
+            commands::open_backups_folder,
+            commands::scan_other_launchers,
+            commands::inspect_launcher_folder,
+            commands::import_other_instances,
+            commands::pick_folder,
             commands::analyze_crash,
             commands::crash_report_text,
             commands::import_modpack,

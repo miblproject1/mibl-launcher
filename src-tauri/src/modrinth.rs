@@ -15,10 +15,10 @@ use crate::tasks::TaskHandle;
 pub const BASE: &str = "https://api.modrinth.com/v2";
 
 fn kind_type(kind: &str) -> &'static str {
-    match kind {
-        "shader" => "shader",
-        "resourcepack" => "resourcepack",
-        "modpack" => "modpack",
+    match kind.to_lowercase().as_str() {
+        "shader" | "shaders" | "shaderpack" | "shaderpacks" => "shader",
+        "resourcepack" | "resourcepacks" | "texturepack" | "texturepacks" => "resourcepack",
+        "modpack" | "modpacks" => "modpack",
         _ => "mod",
     }
 }
@@ -31,6 +31,61 @@ fn loaders_for(loader: &str) -> Option<Vec<&'static str>> {
         "neoforge" => Some(vec!["neoforge"]),
         _ => None,
     }
+}
+
+fn version_date(version: &Value) -> &str {
+    version
+        .get("date_published")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+}
+
+fn version_is_release(version: &Value) -> bool {
+    version.get("version_type").and_then(|v| v.as_str()) == Some("release")
+}
+
+/// Сортировка от новых к старым, релизы всегда выше бета/альфа-версий.
+fn sort_versions(versions: &mut [Value]) {
+    versions.sort_by(|a, b| {
+        version_is_release(b)
+            .cmp(&version_is_release(a))
+            .then_with(|| version_date(b).cmp(version_date(a)))
+    });
+}
+
+fn version_game_versions(version: &Value) -> &[Value] {
+    version
+        .get("game_versions")
+        .and_then(|v| v.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[])
+}
+
+fn version_matches_game(version: &Value, wanted: &str) -> bool {
+    version_game_versions(version)
+        .iter()
+        .any(|v| v.as_str() == Some(wanted))
+}
+
+/// «1.21.4» → «1.21»: минорная ветка для мягкого фоллбэка шейдеров/ресурспаков.
+fn minor_branch(mc_version: &str) -> Option<String> {
+    let mut parts = mc_version.split('.');
+    let major = parts.next()?.trim();
+    let minor = parts.next()?.trim();
+    if major.is_empty() || minor.is_empty() {
+        return None;
+    }
+    Some(format!("{major}.{minor}"))
+}
+
+fn version_matches_minor(version: &Value, branch: &str) -> bool {
+    let prefix = format!("{branch}.");
+    version_game_versions(version).iter().any(|v| {
+        let Some(game_version) = v.as_str() else {
+            return false;
+        };
+        game_version == branch || game_version.starts_with(&prefix)
+    })
 }
 
 async fn get(path: &str, params: &[(String, String)]) -> Result<Value, String> {
@@ -118,16 +173,57 @@ pub async fn project_versions(
     }
 }
 
-async fn pick_version(project_id: &str, loader: &str, mc_version: &str) -> Option<Value> {
+async fn pick_version(
+    project_id: &str,
+    kind: &str,
+    loader: &str,
+    mc_version: &str,
+) -> Option<Value> {
+    let project_type = kind_type(kind);
+
+    // У шейдеров и ресурспаков нет загрузчика модов (в `loaders` у них
+    // iris/optifine/minecraft или пусто), поэтому фильтровать их по
+    // Fabric/Forge/NeoForge/Quilt нельзя — иначе Modrinth вернёт пустой список.
+    if matches!(project_type, "shader" | "resourcepack") {
+        return pick_game_content_version(project_id, mc_version).await;
+    }
+
     let mut versions = project_versions(project_id, Some(loader), Some(mc_version)).await;
     if versions.is_empty() {
         versions = project_versions(project_id, Some(loader), None).await;
     }
-    versions.sort_by(|a, b| {
-        let da = a.get("date_published").and_then(|v| v.as_str()).unwrap_or("");
-        let db = b.get("date_published").and_then(|v| v.as_str()).unwrap_or("");
-        db.cmp(da)
-    });
+    sort_versions(&mut versions);
+    versions.into_iter().next()
+}
+
+/// Мягкий подбор версии шейдера/ресурспака:
+/// точная версия игры → та же минорная ветка (1.21.x) → самый свежий релиз.
+async fn pick_game_content_version(project_id: &str, mc_version: &str) -> Option<Value> {
+    let mut versions = project_versions(project_id, None, None).await;
+    if versions.is_empty() {
+        return None;
+    }
+    sort_versions(&mut versions);
+
+    if !mc_version.is_empty() {
+        if let Some(version) = versions
+            .iter()
+            .find(|version| version_matches_game(version, mc_version))
+        {
+            return Some(version.clone());
+        }
+        if let Some(branch) = minor_branch(mc_version) {
+            if let Some(version) = versions
+                .iter()
+                .find(|version| version_matches_minor(version, &branch))
+            {
+                return Some(version.clone());
+            }
+        }
+    }
+
+    // Шейдеры и текстуры обычно совместимы с соседними версиями игры,
+    // поэтому последним шагом берём самый свежий доступный релиз.
     versions.into_iter().next()
 }
 
@@ -218,17 +314,35 @@ pub async fn install_project(
 ) -> Vec<String> {
     let _ = std::fs::create_dir_all(target_dir);
 
-    let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+    let root_kind = kind_type(kind);
+    let content_kind = if matches!(root_kind, "shader" | "resourcepack") {
+        root_kind
+    } else {
+        "mod"
+    };
+    // Зависимости шейдеров/ресурспаков — это моды (.jar), их нельзя класть
+    // в shaderpacks/resourcepacks, поэтому используем соседнюю папку mods.
+    let mods_dir = if content_kind == "mod" {
+        target_dir.to_path_buf()
+    } else {
+        target_dir
+            .parent()
+            .map(|parent| parent.join("mods"))
+            .unwrap_or_else(|| target_dir.to_path_buf())
+    };
+    let _ = std::fs::create_dir_all(&mods_dir);
+
+    let mut queue: VecDeque<(String, usize, &'static str)> = VecDeque::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut installed: Vec<String> = Vec::new();
-    queue.push_back((project_id.to_string(), 0));
+    queue.push_back((project_id.to_string(), 0, content_kind));
     seen.insert(project_id.to_string());
 
-    while let Some((pid, depth)) = queue.pop_front() {
+    while let Some((pid, depth, project_kind)) = queue.pop_front() {
         if depth > 6 {
             continue;
         }
-        let Some(version) = pick_version(&pid, loader, mc_version).await else {
+        let Some(version) = pick_version(&pid, project_kind, loader, mc_version).await else {
             continue;
         };
         let Some(file) = primary_file(&version) else {
@@ -239,7 +353,12 @@ pub async fn install_project(
                 .and_then(|f| f.as_str())
                 .unwrap_or("mod.jar"),
         );
-        let dest = target_dir.join(&fname);
+        let dest_dir = if project_kind == "mod" {
+            &mods_dir
+        } else {
+            target_dir
+        };
+        let dest = dest_dir.join(&fname);
         let url = file.get("url").and_then(|u| u.as_str()).unwrap_or_default();
         let sha1 = file
             .get("hashes")
@@ -266,12 +385,11 @@ pub async fn install_project(
                 }
                 if let Some(dep_id) = dep.get("project_id").and_then(|v| v.as_str()) {
                     if dep_id != pid && seen.insert(dep_id.to_string()) {
-                        queue.push_back((dep_id.to_string(), depth + 1));
+                        queue.push_back((dep_id.to_string(), depth + 1, "mod"));
                     }
                 }
             }
         }
-        let _ = kind;
     }
     installed
 }

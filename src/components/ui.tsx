@@ -156,6 +156,7 @@ export function Button({
       type={type}
       disabled={disabled || loading}
       data-btn="true"
+      data-snowcap={size === "md" ? "true" : "false"}
       data-variant={variant}
       className={cn(
         "focus-ring inline-flex shrink-0 select-none items-center justify-center font-medium text-sm transition-all duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45",
@@ -198,6 +199,7 @@ export function IconButton({
       aria-label={label}
       disabled={disabled}
       data-btn="true"
+      data-snowcap="false"
       data-variant={variant}
       className={cn(
         "focus-ring inline-flex shrink-0 select-none items-center justify-center font-medium text-sm transition-all duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40",

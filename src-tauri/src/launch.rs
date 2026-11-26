@@ -1,15 +1,19 @@
 //! Формирование аргументов и запуск Minecraft (модлоадеры, Ely.by, Quick Play).
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use md5::{Digest, Md5};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
 use crate::accounts;
 use crate::auth;
+use crate::backups;
 use crate::crash;
 use crate::ely;
 use crate::install;
@@ -40,6 +44,9 @@ pub struct GameExit {
     pub seconds: u64,
     pub ok: bool,
     pub report: Option<crate::models::CrashReport>,
+    /// Последние строки stdout/stderr процесса Java — на случай, когда игра
+    /// упала до создания `minecraft/logs/latest.log`.
+    pub output: Vec<String>,
 }
 
 pub struct Prepared {
@@ -62,11 +69,170 @@ fn prefer_javaw(java: &str) -> String {
         return java.to_string();
     }
     let javaw = path.with_file_name("javaw.exe");
-    if javaw.is_file() {
+    if javaw.is_file() && java_runtime::is_valid_java(&javaw) {
         javaw.to_string_lossy().to_string()
     } else {
         java.to_string()
     }
+}
+
+/// Убрать из пользовательских JVM-аргументов флаги, которые лаунчер задаёт сам.
+///
+/// Иначе `-Xmx` из настроек может перебить объём памяти сборки, а чужой
+/// `-cp`/`-classpath` способен полностью сломать запуск (JVM возьмёт не тот
+/// список библиотек). Пути к нативам тоже всегда заменяются точными.
+fn sanitize_user_jvm(args: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        let lower = arg.to_ascii_lowercase();
+        // Память выставляет лаунчер по настройкам сборки.
+        if lower == "-xmx" || lower == "-xms" {
+            skip_next = true;
+            continue;
+        }
+        if lower.starts_with("-xmx") || lower.starts_with("-xms") {
+            continue;
+        }
+        // Нативы и classpath уже собраны корректно в `prepare`.
+        if lower == "-djava.library.path"
+            || lower == "-dorg.lwjgl.librarypath"
+            || lower == "-cp"
+            || lower == "-classpath"
+            || lower == "-jar"
+        {
+            skip_next = true;
+            continue;
+        }
+        if lower.starts_with("-djava.library.path=")
+            || lower.starts_with("-dorg.lwjgl.librarypath=")
+            || lower.starts_with("-classpath=")
+        {
+            continue;
+        }
+        out.push(arg.clone());
+    }
+    out
+}
+
+/// Экранировать один аргумент для записи в лог (как в командной строке Windows).
+fn quote_arg(arg: &str) -> String {
+    if !arg.is_empty() && !arg.chars().any(|ch| ch.is_whitespace() || ch == '"') {
+        return arg.to_string();
+    }
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('"');
+    let mut backslashes = 0usize;
+    for ch in arg.chars() {
+        match ch {
+            '\\' => backslashes += 1,
+            '"' => {
+                out.push_str(&"\\".repeat(backslashes * 2 + 1));
+                out.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                if backslashes > 0 {
+                    out.push_str(&"\\".repeat(backslashes));
+                    backslashes = 0;
+                }
+                out.push(ch);
+            }
+        }
+    }
+    if backslashes > 0 {
+        out.push_str(&"\\".repeat(backslashes * 2));
+    }
+    out.push('"');
+    out
+}
+
+/// Полная команда запуска без обрезки — для `last_launch.log`.
+fn full_command(command: &[String]) -> String {
+    command
+        .iter()
+        .map(|arg| quote_arg(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn launch_log_path() -> PathBuf {
+    paths::sub("logs").join("last_launch.log")
+}
+
+fn append_launch_log(path: &Path, text: &str) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = file.write_all(text.as_bytes());
+        let _ = file.flush();
+    }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+type OutputBuffer = Arc<Mutex<VecDeque<String>>>;
+type SharedLog = Arc<Mutex<Option<std::fs::File>>>;
+
+/// Читать stdout/stderr процесса построчно, сохраняя последние строки в память
+/// и дописывая их в `last_launch.log`.
+fn spawn_output_reader<R>(
+    reader: R,
+    label: &'static str,
+    lines: OutputBuffer,
+    log_file: SharedLog,
+) -> tokio::task::JoinHandle<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(reader);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    while buf
+                        .last()
+                        .map(|byte| *byte == b'\n' || *byte == b'\r')
+                        .unwrap_or(false)
+                    {
+                        buf.pop();
+                    }
+                    // Java на Windows может писать в системной кодировке —
+                    // lossy-декодирование не теряет строку целиком.
+                    let raw = String::from_utf8_lossy(&buf);
+                    let raw: String = raw.chars().take(4000).collect();
+                    let entry = format!("[{label}] {raw}");
+                    if let Ok(mut guard) = lines.lock() {
+                        guard.push_back(entry.clone());
+                        while guard.len() > 400 {
+                            guard.pop_front();
+                        }
+                    }
+                    if let Ok(mut guard) = log_file.lock() {
+                        if let Some(file) = guard.as_mut() {
+                            let _ = writeln!(file, "{entry}");
+                            let _ = file.flush();
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    })
 }
 
 /// Убрать из аргументов устаревшие/относительные пути к нативам.
@@ -137,20 +303,30 @@ pub async fn prepare(
     let config = store::load_config();
 
     // Ручной путь: сначала настройки конкретной сборки, затем глобальные.
-    let mut java = meta.java_path.trim().to_string();
-    if java.is_empty() {
-        java = config.java_path.trim().to_string();
-    }
-    if java.is_empty() || !std::path::Path::new(&java).is_file() {
-        if let Some(t) = task {
-            t.detail(format!(
-                "Подбор Java {} для Minecraft {}",
-                java_runtime::required_major(&meta.mc_version),
-                meta.mc_version
-            ));
+    // Он используется только если файл действительно рабочий и подходит
+    // по мажорной версии; иначе лаунчер сам подберёт/скачает Java.
+    let configured = {
+        let instance = meta.java_path.trim();
+        if !instance.is_empty() {
+            PathBuf::from(instance)
+        } else {
+            PathBuf::from(config.java_path.trim())
         }
-        java = java_runtime::ensure_java(&meta.mc_version, task).await?;
+    };
+    let preferred = if configured.as_os_str().is_empty() {
+        None
+    } else {
+        Some(configured.as_path())
+    };
+
+    if let Some(t) = task {
+        t.detail(format!(
+            "Подбор Java {} для Minecraft {}",
+            java_runtime::required_major_for(Some(&merged), &meta.mc_version),
+            meta.mc_version
+        ));
     }
+    let java = java_runtime::ensure_java(&meta.mc_version, Some(&merged), preferred, task).await?;
     if java.is_empty() {
         return Err(
             "Не удалось подобрать Java. Установите Java с https://adoptium.net/ или укажите путь в настройках сборки."
@@ -197,12 +373,32 @@ pub async fn prepare(
     let client_jar = paths::versions_dir()
         .join(&root_id)
         .join(format!("{root_id}.jar"));
+    if !client_jar.is_file() {
+        return Err(format!(
+            "Не найден клиент Minecraft: {}. Переустановите сборку «{}».",
+            client_jar.display(),
+            meta.name
+        ));
+    }
+    // Classpath без пустых элементов и дубликатов: `;;` или несуществующий
+    // файл в начале списка приводят к «Could not find or load main class».
     let mut cp_parts: Vec<String> = Vec::new();
-    cp_parts.push(client_jar.to_string_lossy().to_string());
-    for path in &classpath {
-        if path.is_file() {
-            cp_parts.push(path.to_string_lossy().to_string());
+    let mut cp_seen: HashSet<String> = HashSet::new();
+    for path in std::iter::once(&client_jar).chain(classpath.iter()) {
+        let text = path.to_string_lossy().trim().to_string();
+        if text.is_empty() {
+            continue;
         }
+        if !path.is_file() {
+            eprintln!("[classpath] пропущен отсутствующий файл: {text}");
+            continue;
+        }
+        if cp_seen.insert(text.clone()) {
+            cp_parts.push(text);
+        }
+    }
+    if cp_parts.is_empty() {
+        return Err("Classpath пуст: не удалось найти ни одного файла библиотек. Переустановите сборку.".into());
     }
     let cp = cp_parts.join(";");
 
@@ -360,8 +556,10 @@ pub async fn prepare(
         "-Dminecraft.launcher.version={}",
         env!("CARGO_PKG_VERSION")
     ));
-    command.extend(config.jvm_args.iter().cloned());
-    command.extend(meta.jvm_args.iter().cloned());
+    // Пользовательские флаги не должны дублировать/перебивать память,
+    // classpath и пути к нативам, которые лаунчер уже задал.
+    command.extend(sanitize_user_jvm(&config.jvm_args));
+    command.extend(sanitize_user_jvm(&meta.jvm_args));
 
     if is_ely_authed {
         if let Some(t) = task {
@@ -450,12 +648,31 @@ pub async fn launch(
     meta.last_played = instances::now();
     let _ = instances::save(&meta);
 
+    // Полная команда запуска всегда попадает в отдельный лог — даже если
+    // игра не успела создать свой `minecraft/logs/latest.log`.
+    let log_path = launch_log_path();
+    let log_header = format!(
+        "Mibl Launcher {}\nВремя (unix): {}\nСборка: {}\nРабочая папка: {}\nJava: {}\nАргументов: {}\n\nПолная команда запуска:\n{}\n\n--- вывод процесса Java (stdout/stderr) ---\n",
+        env!("CARGO_PKG_VERSION"),
+        unix_now(),
+        prepared.instance.name,
+        prepared.game_dir.display(),
+        prepared.command.first().map(String::as_str).unwrap_or(""),
+        prepared.command.len(),
+        full_command(&prepared.command),
+    );
+    if let Err(error) = std::fs::write(&log_path, &log_header) {
+        eprintln!("[launch] не удалось записать {}: {error}", log_path.display());
+    }
+
     let mut cmd = tokio::process::Command::new(&prepared.command[0]);
     cmd.args(&prepared.command[1..])
         .current_dir(&prepared.game_dir)
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        // stdout/stderr обязательно перехватываем: иначе причина падения
+        // (неверный main class, Java, аргумент) теряется навсегда.
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
     // Windows: без чёрного окна консоли, но в отдельной группе процессов.
     crate::proc::hide_console_new_group(&mut cmd);
@@ -475,13 +692,18 @@ pub async fn launch(
         let _ = win.minimize();
     }
 
-    let child = match cmd.spawn() {
+    let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(error) => {
             if let Some(win) = &window {
                 let _ = win.unminimize();
             }
-            return Err(format!("Не удалось запустить игру: {error}"));
+            let message = format!("Не удалось запустить игру: {error}");
+            append_launch_log(
+                &log_path,
+                &format!("\n[launcher] {message}\nЛог запуска: {}\n", log_path.display()),
+            );
+            return Err(format!("{message}\nЛог запуска: {}", log_path.display()));
         }
     };
 
@@ -492,10 +714,28 @@ pub async fn launch(
         command_preview: preview(&prepared.command),
     };
 
+    let lines: OutputBuffer = Arc::new(Mutex::new(VecDeque::new()));
+    let log_file: SharedLog = Arc::new(Mutex::new(
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .ok(),
+    ));
+    let out_task = child
+        .stdout
+        .take()
+        .map(|stdout| spawn_output_reader(stdout, "stdout", lines.clone(), log_file.clone()));
+    let err_task = child
+        .stderr
+        .take()
+        .map(|stderr| spawn_output_reader(stderr, "stderr", lines.clone(), log_file.clone()));
+
     let app2 = app.clone();
     let window2 = window.clone();
     let name = prepared.instance.name.clone();
     let args = prepared.command.clone();
+    let log_path2 = log_path.clone();
     let _ = app.emit(
         "game-start",
         serde_json::json!({
@@ -507,8 +747,16 @@ pub async fn launch(
 
     tauri::async_runtime::spawn(async move {
         let started = Instant::now();
-        let mut child = child;
         let status = child.wait().await;
+        // Дожидаемся чтения потоков: без этого последние строки stderr могут
+        // не попасть в отчёт. Таймаут защищает от зависшего наследника,
+        // который держит пайп открытым после выхода игры.
+        if let Some(task) = out_task {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task).await;
+        }
+        if let Some(task) = err_task {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task).await;
+        }
         let seconds = started.elapsed().as_secs();
         instances::add_playtime(&name, seconds);
 
@@ -517,22 +765,84 @@ pub async fn launch(
             let _ = win.set_focus();
         }
 
-        let code = status.ok().and_then(|s| s.code());
-        let ok = code == Some(0) || code.is_none();
+        let (code, wait_error) = match status {
+            Ok(status) => (status.code(), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        let ok = wait_error.is_none() && (code == Some(0) || code.is_none());
+        let early_crash = !ok && seconds < 5;
+        let output: Vec<String> = lines
+            .lock()
+            .map(|guard| guard.iter().rev().take(30).rev().cloned().collect())
+            .unwrap_or_default();
+
+        append_launch_log(
+            &log_path2,
+            &format!(
+                "\n--- процесс завершён: код {:?}, время {} с{} ---\n",
+                code,
+                seconds,
+                wait_error
+                    .as_deref()
+                    .map(|error| format!(", ошибка ожидания: {error}"))
+                    .unwrap_or_default()
+            ),
+        );
+
         let report = if ok {
             None
         } else {
-            Some(crash::analyze(&name, code))
+            Some(crash::analyze_with_output(
+                &name,
+                code,
+                &output,
+                early_crash,
+            ))
         };
 
         let payload = GameExit {
-            instance: name,
+            instance: name.clone(),
             code,
             seconds,
             ok,
             report,
+            output,
         };
         let _ = app2.emit("game-exit", payload);
+
+        // Автобэкап миров — отдельной задачей, чтобы выход из игры не ждал диск.
+        let backup_app = app2.clone();
+        let backup_name = name;
+        tauri::async_runtime::spawn(async move {
+            let cfg = store::load_config();
+            let auto = cfg.auto_backup_worlds
+                && instances::load(&backup_name)
+                    .map(|meta| meta.auto_backup)
+                    .unwrap_or(false);
+            if !auto || seconds < 30 {
+                return;
+            }
+            let task = TaskHandle::new(
+                &backup_app,
+                format!("Бэкап миров «{backup_name}»"),
+                "backup",
+            );
+            let name_for_job = backup_name.clone();
+            let keep = cfg.world_backup_keep;
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                backups::backup_worlds(&name_for_job, true, keep)
+            })
+            .await;
+            match result {
+                Ok(Ok(_)) => task.finish(),
+                Ok(Err(error)) => task.fail(error),
+                Err(error) => task.fail(format!("Бэкап миров: {error}")),
+            }
+            let _ = backup_app.emit(
+                "backups-changed",
+                serde_json::json!({ "instance": backup_name }),
+            );
+        });
     });
 
     Ok(info)

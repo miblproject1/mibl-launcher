@@ -11,6 +11,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_backup_keep() -> u32 {
+    7
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -31,6 +35,15 @@ pub struct Config {
     pub auto_minimize: bool,
     /// Глобальные JVM-аргументы (дополняют аргументы сборки).
     pub jvm_args: Vec<String>,
+    /// Автоматический бэкап миров после выхода из игры (2.6).
+    #[serde(default = "default_true")]
+    pub auto_backup_worlds: bool,
+    /// Сколько архивов одного мира хранить (3..=20).
+    #[serde(default = "default_backup_keep")]
+    pub world_backup_keep: u32,
+    /// Личный API-ключ CurseForge, указанный в настройках лаунчера.
+    #[serde(default)]
+    pub curseforge_api_key: String,
 }
 
 impl Default for Config {
@@ -47,6 +60,9 @@ impl Default for Config {
             game_language: default_language(),
             auto_minimize: true,
             jvm_args: Vec::new(),
+            auto_backup_worlds: true,
+            world_backup_keep: default_backup_keep(),
+            curseforge_api_key: String::new(),
         }
     }
 }
@@ -229,6 +245,12 @@ pub struct Instance {
     /// Язык Minecraft — записывается в options.txt перед запуском.
     #[serde(default = "default_language")]
     pub game_language: String,
+    /// Автобэкап миров этой сборки после выхода из игры (2.6).
+    #[serde(default = "default_true")]
+    pub auto_backup: bool,
+    /// Откуда сборка импортирована (2.6): путь другой сборки/лаунчера.
+    #[serde(default)]
+    pub import_source: String,
 }
 
 impl Default for Instance {
@@ -252,6 +274,8 @@ impl Default for Instance {
             quick_play_target: String::new(),
             ultra_fps_at: 0.0,
             game_language: default_language(),
+            auto_backup: true,
+            import_source: String::new(),
         }
     }
 }
@@ -267,6 +291,7 @@ pub struct InstancePatch {
     pub quick_play_mode: Option<String>,
     pub quick_play_target: Option<String>,
     pub game_language: Option<String>,
+    pub auto_backup: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]

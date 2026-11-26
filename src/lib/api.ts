@@ -41,6 +41,14 @@ export interface Config {
   auto_minimize: boolean;
   /** Дополнительные глобальные JVM-аргументы. */
   jvm_args: string[];
+  /** Автоматический бэкап миров после закрытия игры. */
+  auto_backup_worlds: boolean;
+  /** Сколько архивов на мир хранить. */
+  world_backup_keep: number;
+  /** Личный API-ключ CurseForge для каталога модов и сборок. */
+  curseforge_api_key: string;
+  /** Оптимизация FPS (ограничение кадров, отключено по умолчанию). */
+  optimize_fps: boolean;
 }
 
 export interface Theme {
@@ -130,6 +138,10 @@ export interface Instance {
   ultra_fps_at: number;
   /** Язык Minecraft, записываемый в options.txt перед запуском. */
   game_language: string;
+  /** Автобэкап миров этой сборки после закрытия игры. */
+  auto_backup: boolean;
+  /** Откуда сборка импортирована (пусто — создана в лаунчере). */
+  import_source: string;
 }
 
 export interface InstanceView extends Instance {
@@ -291,6 +303,8 @@ export interface GameExit {
   seconds: number;
   ok: boolean;
   report: CrashReport | null;
+  /** Последние строки stdout/stderr Java, если игра упала до создания лога. */
+  output?: string[];
 }
 
 export interface UltraFpsResult {
@@ -312,6 +326,70 @@ export interface ImportResult {
   instance: Instance;
   installed_files: number;
   skipped: string[];
+}
+
+/* --------------------------------------------------- бэкапы миров 2.6.0 */
+export interface WorldBackup {
+  path: string;
+  file_name: string;
+  world: string;
+  stamp: string;
+  created: number;
+  size: number;
+  automatic: boolean;
+  legacy: boolean;
+}
+
+export interface RestoreResult {
+  world: string;
+  files: number;
+  previous_saved: string | null;
+  skipped: string[];
+}
+
+/* ------------------------------------------- импорт из других лаунчеров */
+export interface LauncherInfo {
+  source: string;
+  name: string;
+  path: string;
+  instances: number;
+}
+
+export interface FoundInstance {
+  id: string;
+  source: string;
+  launcher: string;
+  name: string;
+  path: string;
+  mc_version: string;
+  loader: string;
+  loader_version: string | null;
+  icon: string | null;
+  mods: number;
+  worlds: number;
+  size_bytes: number;
+  already_imported: boolean;
+}
+
+export interface LauncherScan {
+  launchers: LauncherInfo[];
+  instances: FoundInstance[];
+  warnings: string[];
+}
+
+export interface ImportItem {
+  path: string;
+  source: string;
+  name?: string | null;
+  mc_version?: string | null;
+  loader?: string | null;
+  loader_version?: string | null;
+}
+
+export interface ImportSummary {
+  imported: ImportResult[];
+  skipped: number;
+  errors: string[];
 }
 
 export const api = {
@@ -352,6 +430,7 @@ export const api = {
       quick_play_mode?: string;
       quick_play_target?: string;
       game_language?: string;
+      auto_backup?: boolean;
     },
   ) => invoke<Instance>("update_instance", { name, patch }),
   deleteInstance: (name: string) => invoke<void>("delete_instance", { name }),
@@ -477,7 +556,23 @@ export const api = {
   refreshMicrosoft: (index: number) =>
     invoke<[AccountView[], number]>("microsoft_refresh_account", { index }),
 
-  backupInstance: (name: string) => invoke<string>("backup_instance", { name }),
+  /* -------------------------------------------------- бэкапы миров 2.6.0 */
+  listBackups: (instance: string) => invoke<WorldBackup[]>("list_world_backups", { instance }),
+  backupWorlds: (instance: string, auto = false) =>
+    invoke<WorldBackup[]>("backup_worlds_now", { instance, auto }),
+  restoreBackup: (instance: string, path: string) =>
+    invoke<RestoreResult>("restore_world_backup", { instance, path }),
+  deleteBackup: (instance: string, path: string) =>
+    invoke<void>("delete_world_backup", { instance, path }),
+  openBackupsFolder: (instance: string) => invoke<void>("open_backups_folder", { instance }),
+
+  /* ------------------------------------ импорт из других лаунчеров 2.6.0 */
+  scanLaunchers: () => invoke<LauncherScan>("scan_other_launchers"),
+  inspectFolder: (path: string) => invoke<FoundInstance>("inspect_launcher_folder", { path }),
+  importLaunchers: (items: ImportItem[]) =>
+    invoke<ImportSummary>("import_other_instances", { items }),
+  pickFolder: () => invoke<string | null>("pick_folder"),
+
   analyzeCrash: (instance: string, exitCode: number | null) =>
     invoke<CrashReport>("analyze_crash", { instance, exitCode }),
   crashText: (report: CrashReport) =>
@@ -526,6 +621,16 @@ export function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return tt("units.mb", { n: (bytes / 1024 / 1024).toFixed(1) });
   if (bytes >= 1024) return tt("units.kb", { n: Math.round(bytes / 1024) });
   return tt("units.bytes", { n: bytes });
+}
+
+/** Метка времени архива: локальная дата и время из unix-секунд. */
+export function formatStamp(secs: number): string {
+  if (!secs || secs <= 0) return "—";
+  try {
+    return new Date(secs * 1000).toLocaleString();
+  } catch {
+    return String(secs);
+  }
 }
 
 export function formatDownloads(n: number): string {
